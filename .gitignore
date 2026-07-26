@@ -1,0 +1,20 @@
+.idea
+.vscode/
+.DS_Store
+
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.plan
+terraform/.env
+terraform/terraform.tfvars
+
+# Ansible: inventory is generated from `terraform output` by `make inventory`
+ansible/inventory/hosts.ini
+*.retry
+
+# Never commit decrypted secrets. The *.enc.env files ARE safe to commit.
+secrets/*.dec*
+secrets/*.plain*

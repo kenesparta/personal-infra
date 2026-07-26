@@ -1,0 +1,25 @@
+# Single source of truth for the project fan-out (spec §5.3).
+#
+# Read by BOTH tools — never let either carry its own copy:
+#   Terraform   yamldecode(file("${path.module}/../projects.yml"))   -> origin DNS records, CloudFront distributions
+#   Ansible     vars_files: ../../projects.yml                       -> Caddy vhosts, Postgres DBs, deploy timers
+#
+# Ceiling is FOUR services (C3) — RAM-bound at small_3_0, see AD-1. Each entry
+# costs ~100 MB resident on a 2 GB host.
+#
+# Fields:
+#   name      identifier: container name, systemd unit, Postgres role
+#   hostname  public name; becomes a CloudFront alias (must be covered by the ACM cert)
+#   origin    A record -> static IP; Caddy vhost + Let's Encrypt cert (must resolve
+#             DIRECTLY to the instance so HTTP-01 can succeed — see AD-8)
+#   image     GHCR image, pulled by the systemd timer (AD-10)
+#   port      container port Caddy proxies to
+#   database  Postgres database + role name
+
+projects:
+  - name: blog
+    hostname: kenesparta.dev
+    origin: origin.kenesparta.dev
+    image: ghcr.io/kenesparta/kenespartadev
+    port: 3000
+    database: blog

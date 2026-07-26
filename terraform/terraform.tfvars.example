@@ -1,0 +1,17 @@
+# Copy to terraform.tfvars (gitignored) and fill in.
+# No secret values belong in this file or in terraform.tfvars — acceptance
+# criterion 3. The only required entry is ssh_allowed_cidrs.
+
+# Source CIDRs allowed on port 22. Your home/office addresses.
+# NEVER "0.0.0.0/0" — a variable validation rejects it, because the firewall
+# resource is authoritative (G3) and a wildcard here exposes SSH globally.
+# Find your current address with: curl -s https://checkip.amazonaws.com
+ssh_allowed_cidrs = ["203.0.113.4/32"]
+
+# ── Optional: all of these have working defaults ─────────────────────────────
+
+# instance_name       = "kenesparta-host"
+# availability_zone   = "us-east-1a"   # verify: aws lightsail get-regions --include-availability-zones
+# blueprint_id        = "ubuntu_24_04" # verify: aws lightsail get-blueprints
+# bundle_id           = "small_3_0"    # 2 GB / 2 vCPU / 60 GB / 3 TB, $12/mo
+# ssh_public_key_path = "~/.ssh/personal-infra.pub"

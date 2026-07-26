@@ -1,0 +1,10 @@
+# sops config: every file under secrets/ ending in .env is encrypted for the
+# age recipients below (dotenv format is inferred from the .env extension).
+# The private key lives OUTSIDE the repo, in ~/.config/sops/age/keys.txt
+# (export SOPS_AGE_KEY_FILE — the Makefiles do it; see README > Secrets).
+# Recipients are managed with `make secrets/recipient-add AGE=…` / `…-rm`;
+# after either, run `make secrets/updatekeys` (and `make secrets/rotate` on a
+# removal — updatekeys alone does not revoke the old data key).
+creation_rules:
+  - path_regex: secrets/.*\.env$
+    age: age1t68w9x7xed0cwfmm53hcs7c073gn7cnz5300a84xk5w872uq7dksc0h4av
