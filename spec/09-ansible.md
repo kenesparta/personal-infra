@@ -49,7 +49,9 @@ vault value — Terraform first, then Ansible, or requests 403 in the gap.
 ## 9.4 Vault contents
 
 `group_vars/vault.yml`, `ansible-vault`-encrypted (A2). `group_vars/vault.yml.example` is the committed, plaintext
-template; it carries key names only and never a value.
+template; it carries key names only and never a value. Both playbooks load it with an explicit `vars_files` entry:
+`group_vars/<name>.yml` only auto-loads for an inventory group called `<name>`, and no group named `vault` exists —
+relying on the convention would silently load nothing.
 
 | Key                            | Used by    | Notes                                                          |
 |--------------------------------|------------|----------------------------------------------------------------|

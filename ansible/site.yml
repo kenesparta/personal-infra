@@ -17,6 +17,9 @@
   # group_vars: two copies is exactly the drift this design exists to prevent.
   vars_files:
     - ../projects.yml
+    # Explicit, not convention: a group_vars FILE named vault.yml would only
+    # ever load for a group named `vault`, which the inventory does not have.
+    - group_vars/vault.yml
 
   pre_tasks:
     - name: Fail early rather than half-configure the host

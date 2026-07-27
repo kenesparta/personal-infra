@@ -17,6 +17,10 @@
   hosts: app
   become: true
 
+  # Same explicit load as site.yml — vault.yml is not named after a group.
+  vars_files:
+    - group_vars/vault.yml
+
   pre_tasks:
     - name: Confirm the snapshot exists
       # Deliberately a human gate, not an automated check: the host has no AWS

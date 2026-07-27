@@ -40,6 +40,10 @@ Each phase ends with a verifiable outcome and is independently revertible. The s
 - [ ] Confirm the container's `DATABASE_URL` resolves `postgres:5432` on the `web` network (AD-3; **not** `127.0.0.1`,
       which inside a bridge-networked container is its own namespace)
 - **Verify:** row counts match; the app renders posts from the host database
+- *As executed (2026-07-27):* the managed database was deleted by the operator immediately after taking final dumps,
+  *before* this phase ran — so "row counts match" was verified dump→scratch-restore against dump→host-restore
+  (identical), not against the live source. The final dumps of every database (including `budget-assistant`, which has
+  no `projects.yml` entry) are archived under `s3://kenesparta-infra-backups/managed-db-final/`.
 
 ## Phase 5 — Registry cutover
 
@@ -61,7 +65,8 @@ Each phase ends with a verifiable outcome and is independently revertible. The s
 
 - [ ] Destroy the container service and deployment version
 - [ ] Destroy the ECR repository and its policies; trim the CI role to the CDN write only
-- [ ] Delete the Lightsail managed database (**only after Phase 4 is verified**)
+- [x] Delete the Lightsail managed database (**only after Phase 4 is verified**) — *done early, out of band, by the
+      operator on 2026-07-27 after taking final dumps; see the Phase 4 note*
 - [ ] Delete `kenesparta.dev/tf` from the application repository
 - **Verify:** `terraform plan` clean; monthly cost trending toward the model in [§14](14-cost.md)
 

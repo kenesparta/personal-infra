@@ -25,7 +25,13 @@ services:
     volumes:
       # LOAD-BEARING, like Caddy's /data (G8). `docker compose down -v` in this
       # directory destroys every database on the host.
-      - {{ postgres_data_volume }}:/var/lib/postgresql/data
+      #
+      # Mounted at the PARENT, not .../data: the 18+ images keep data in
+      # major-version subdirectories (/var/lib/postgresql/18/docker) so a
+      # future `pg_upgrade --link` can work across one mount, and the
+      # entrypoint refuses to start with a volume at the pre-18 path
+      # (docker-library/postgres#1259).
+      - {{ postgres_data_volume }}:/var/lib/postgresql
 
     # Docker's default 64 MB /dev/shm is not enough for parallel workers; they
     # fail at query time rather than at start, which makes it a confusing

@@ -16,10 +16,48 @@
       - gnupg
       - unattended-upgrades
       - fail2ban
-      # The backup script uploads to the Lightsail bucket with it (G5 — the
-      # instance cannot assume a role, so this authenticates with a key on disk).
-      - awscli
+      # For unarchiving the AWS CLI bundle below.
+      - unzip
     state: present
+
+# The backup script uploads to the Lightsail bucket with the AWS CLI (G5 — the
+# instance is attached to the bucket, and the CLI reads short-lived credentials
+# from instance metadata). Ubuntu 24.04 dropped the `awscli` apt package, so
+# this is the official v2 bundle. NOT the snap: the backup timer resolves a
+# bare `aws` through systemd's default PATH, which contains /usr/local/bin but
+# never /snap/bin.
+- name: Check whether the AWS CLI is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/aws
+  register: aws_cli_bin
+
+- name: Download the AWS CLI v2 bundle
+  ansible.builtin.get_url:
+    url: "https://awscli.amazonaws.com/awscli-exe-linux-{{ ansible_architecture }}.zip"
+    dest: /var/tmp/awscliv2.zip
+    mode: "0644"
+  when: not aws_cli_bin.stat.exists
+
+- name: Unpack the AWS CLI bundle
+  ansible.builtin.unarchive:
+    src: /var/tmp/awscliv2.zip
+    dest: /var/tmp
+    remote_src: true
+  when: not aws_cli_bin.stat.exists
+
+- name: Install the AWS CLI
+  ansible.builtin.command:
+    cmd: /var/tmp/aws/install
+    creates: /usr/local/bin/aws
+  when: not aws_cli_bin.stat.exists
+
+- name: Remove the AWS CLI installer artifacts
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /var/tmp/awscliv2.zip
+    - /var/tmp/aws
 
 - name: Read the current timezone
   # ansible.builtin has no timezone module (it lives in community.general) and
