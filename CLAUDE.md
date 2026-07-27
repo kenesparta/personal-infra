@@ -4,14 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-**The migration is complete through Phase 7 (2026-07-27).** The instance serves both projects in production:
+**The migration is complete through Phase 8 (2026-07-27).** The instance serves both projects in production:
 `kenesparta.dev` (blog) and `bot.kenesparta.dev` (budget Telegram bot), each behind its own CloudFront distribution →
 Caddy (Let's Encrypt) → container, with data restored into the host Postgres. The old estates are gone: the container
 services, ECR repositories, managed database, `../kenesparta.dev/tf` and `../budget-assistant/deploy/tf` are all
 destroyed or deleted; this repository's state (`s3://tf.kenesparta.dev/infra/prod/terraform.tfstate`) is the account's
-only live Terraform. **Remaining: Phase 8 (hardening — needs an Ubuntu Pro token in the vault and a snapshot first) and
-Phase 9 (backup-restore rehearsal).** The final pre-migration dumps live at
-`s3://kenesparta-infra-backups/managed-db-final/`.
+only live Terraform. The host is Ubuntu-Pro-attached and CIS Level 1 hardened — via the **G18-tailored profile only**,
+never bare `usg fix cis_level1_server`. **Remaining: Phase 9 (backup-restore rehearsal).** The final pre-migration
+dumps live at `s3://kenesparta-infra-backups/managed-db-final/`; the pre-hardening rollback snapshot is
+`pre-harden-2026-07-27`.
 
 Read `spec/` before touching anything — it is rev 2.3 and records decisions that reverse parts of earlier revisions;
 `spec/10-phases.md` carries as-executed annotations where reality diverged from the plan.
@@ -130,8 +131,11 @@ Failure modes that are not obvious from any single file (`spec/12-gotchas.md`):
   HSTS-preloaded so a TLS error makes the site unreachable rather than degraded — iterate against LE staging.
 - **Idempotency is an acceptance criterion.** A second consecutive `make configure` must report zero `changed`. Use
   handlers; never restart unconditionally.
-- **Hardening is a separate playbook.** `usg fix cis_level1_server` can lock you out. Snapshot, run `harden.yml`, verify
+- **Hardening is a separate playbook.** `usg fix` can lock you out. Snapshot, run `harden.yml`, verify
   SSH from a *second* terminal before closing the first, then re-run `site.yml`. Guard `usg fix` with `creates:`.
+  It runs **only** with the G18 tailoring file: the stock profile's host-firewall chapter flushes Docker's chains and
+  the metadata guard, re-enables `nftables.service`, and zeroes `ip_forward` — applied bare in Phase 8, it took
+  container networking down until repaired.
 - **Secrets:** Postgres passwords, the GHCR PAT and the origin secret live in `ansible/group_vars/vault.yml`
   (ansible-vault); `vault.yml.example` is the committed, key-names-only template. This repo *also* uses **sops + age**
   for `secrets/prod.enc.env`, read by Terraform — two different mechanisms, do not conflate them.
@@ -145,7 +149,8 @@ Failure modes that are not obvious from any single file (`spec/12-gotchas.md`):
   (`personal_infra_guard`), deliberately not a rule in Docker's `DOCKER-USER` chain: Docker rebuilds its chains on every
   daemon start and cannot touch a separate table, and an independent table can be ordered *before* `docker.service`.
   Consequences: `iptables -S` will not show it (use `nft list table inet personal_infra_guard`), and Ubuntu's
-  `nftables.service` must stay disabled because its stock config begins with `flush ruleset`.
+  `nftables.service` must stay disabled because its stock config begins with `flush ruleset` — the docker role enforces
+  this since Phase 8 (G18).
 - **The Phase 0 gate is historical** (passed 2026-07-27). It moved the additive `.tf` files aside so it answered only
   "did the state copy land correctly?"; since the Phase 6 origin swap and Phase 7 deletion of `legacy.tf` it can no
   longer report clean, and the target now prints a notice saying so.

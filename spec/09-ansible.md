@@ -24,12 +24,12 @@ management and couples `terraform destroy` to Ansible's working tree.
 | Role        | Responsibility                                                                    | Notes                                     |
 |-------------|-----------------------------------------------------------------------------------|-------------------------------------------|
 | `common`    | apt cache, base packages, `unattended-upgrades`, timezone, `fail2ban`             | Runs first, no dependencies               |
-| `docker`    | Engine + Compose plugin from Docker's apt repo, `web` network, GHCR login, metadata guard | Do not use the distro `docker.io` package; guard is G16 |
+| `docker`    | Engine + Compose plugin from Docker's apt repo, `web` network, GHCR login, metadata guard, `nftables.service` kept off | Do not use the distro `docker.io` package; guard is G16, service-off is G18 |
 | `postgres`  | Compose stack on `web`, no published port, per-project DB + role, `scram-sha-256`, **2 GB tuning** | Passwords from vault; see A2, AD-1, AD-3  |
 | `caddy`     | Compose stack, templated `Caddyfile`, origin-secret gate, named volume for `/data` | `/data` volume is load-bearing — see G8   |
 | `deploy`    | One systemd `.service` + `.timer` per project                                     | Templated from `projects.yml`             |
 | `backup`    | `pg_dump` script, systemd timer — **no credentials** (G5)                         | Writes to the Lightsail bucket            |
-| `hardening` | `pro attach`, `pro enable usg`, `usg fix`                                          | **Separate playbook only** — see A4       |
+| `hardening` | `pro attach`, `pro enable usg`, `usg fix` with the G18 tailoring                   | **Separate playbook only** — see A4       |
 
 ## 9.3 Caddy origin gate
 

@@ -132,3 +132,21 @@ the container keeps reading the pre-edit content forever. Found in Phase 6: the 
 produced `changed` on the template task, the reload handler ran — and Caddy logged `config is unchanged`, because
 inside the container the file had never changed. Mount a directory (renames inside a mounted directory are visible)
 and keep the templated file in it.
+
+**G18 — CIS's host-firewall chapter is incompatible with this host; `usg fix` must run tailored.** Found in Phase 8:
+the stock `cis_level1_server` remediation (a) wrote an `/etc/nftables.conf` beginning with `flush ruleset`, then enabled
+**and started** `nftables.service` — the flush deleted Docker's chains and the `personal_infra_guard` table (G16) the
+moment it ran, and would have re-run on every boot; (b) purged `ufw`; and (c) appended `net.ipv4.ip_forward = 0` and
+`net.ipv6.conf.all.forwarding = 0` to `/etc/sysctl.conf` and applied them, severing container NAT — inbound traffic
+survived only because `docker-proxy` happens to listen on the published ports directly, while container-outbound
+(Telegram API, Let's Encrypt renewals) went dark.
+
+The hardening role therefore applies a **tailored** profile: `roles/hardening/files/cis-level1-server-tailoring.xml`
+(generated with `usg generate-tailoring cis_level1_server`, consumed by `usg fix --tailoring-file`) deselects the whole
+host-firewall chapter — ufw, nftables, iptables and iptables-persistent, CIS 4.2–4.4 — plus the two forwarding sysctls
+in 3.3, 22 rules in all. The rationale is the architecture, not convenience: the network perimeter of this host is the
+Lightsail firewall (G3, G11), and packet-level policy on the box belongs to Docker's managed chains and the metadata
+guard (G16). A host-level default-deny firewall here would either duplicate the Lightsail rules or fight Docker's chain
+management, and `iptables-persistent` would restore a stale snapshot of Docker's dynamic rules at boot. The `docker`
+role additionally enforces `nftables.service` disabled and stopped, so even an untailored `usg fix` cannot leave the
+boot-time flush armed. After a USG benchmark upgrade, regenerate the tailoring and re-apply the 22 deselections.

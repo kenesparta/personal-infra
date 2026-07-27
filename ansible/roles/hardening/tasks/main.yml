@@ -22,6 +22,27 @@
   args:
     creates: /usr/sbin/usg
 
+- name: Create the usg configuration directory
+  ansible.builtin.file:
+    path: /etc/usg
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the tailored CIS profile
+  # G18: the stock profile's host-firewall chapter flushes Docker's chains and
+  # the metadata guard (G16) and turns IP forwarding off. The tailoring
+  # deselects CIS 4.2–4.4 and the two forwarding sysctls — the Lightsail
+  # firewall (G3, G11) is the perimeter; Docker and the guard own the packet
+  # layer on the box.
+  ansible.builtin.copy:
+    src: cis-level1-server-tailoring.xml
+    dest: /etc/usg/personal-infra-tailoring.xml
+    owner: root
+    group: root
+    mode: "0600"
+
 - name: Create the marker directory
   ansible.builtin.file:
     path: /var/lib/personal-infra
@@ -34,8 +55,9 @@
   # `creates:` is what makes this idempotent (A6). Without the marker, `usg fix`
   # re-runs on every play — it is slow, it restarts sshd, and re-applying it
   # over a config Ansible has since changed is how a hardened host quietly
-  # diverges from what site.yml believes it configured.
-  ansible.builtin.command: usg fix cis_level1_server
+  # diverges from what site.yml believes it configured. The profile comes from
+  # the tailoring file, never bare `cis_level1_server` — see G18.
+  ansible.builtin.command: usg fix --tailoring-file /etc/usg/personal-infra-tailoring.xml
   args:
     creates: /var/lib/personal-infra/usg-cis-level1-applied
   register: hardening_usg
@@ -45,7 +67,8 @@
     # Deliberately not a plain touch: knowing WHICH profile was applied is what
     # you need a year later, when the question is whether re-running is safe.
     content: |
-      profile: cis_level1_server
+      profile: cis_level1_server, tailored per G18 (firewall chapter and
+      forwarding sysctls deselected — /etc/usg/personal-infra-tailoring.xml)
       applied_by: ansible (personal-infra, role: hardening)
       Remove this file to force `usg fix` to run again.
     dest: /var/lib/personal-infra/usg-cis-level1-applied

@@ -77,8 +77,18 @@ Each phase ends with a verifiable outcome and is independently revertible. The s
 
 ## Phase 8 — Hardening (deliberate, separate)
 
-- [ ] Snapshot first, `make harden`, verify SSH in a second terminal **before closing the first**
-- [ ] Re-run `make configure` to confirm hardening broke nothing
+- [x] Snapshot first, `make harden`, verify SSH in a second terminal **before closing the first** — *2026-07-27;
+      snapshot `pre-harden-2026-07-27`, the "first terminal" an SSH ControlMaster session held open throughout, a fresh
+      connection verified before it closed*
+- [x] Re-run `make configure` to confirm hardening broke nothing — *run 1 `changed=1`, run 2 `changed=0` (A1 holds)*
+- *As executed (2026-07-27):* the first `usg fix` applied the **stock** profile (111 failing rules remediated) and its
+  host-firewall chapter promptly broke the design: `nftables.service` enabled and started with a `flush ruleset`
+  config — Docker's chains and the G16 guard wiped live — `ufw` purged, and `net.ipv4.ip_forward` forced to 0, killing
+  container-outbound traffic while inbound survived only via `docker-proxy`. Repaired in place (service disabled, guard
+  reloaded, sysctls reverted, dockerd restarted under live-restore — zero container downtime), then **G18** was added
+  and `usg fix` re-ran with the tailoring file (22 rules deselected); the marker records the tailored profile.
+  Rebooted afterwards for the kernel parameters and to prove the boot order: guard active before containers,
+  `nftables.service` inactive, forwarding restored by dockerd, all four containers and both sites up.
 
 ## Phase 9 — Validation
 
