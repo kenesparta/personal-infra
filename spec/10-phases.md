@@ -25,6 +25,10 @@ Each phase ends with a verifiable outcome and is independently revertible. The s
 
 ## Phase 3 — Configuration (Ansible)
 
+- [ ] Seed `ghcr.io/kenesparta/kenespartadev:latest` by retagging the live ECR image (one-time bridge — the deploy
+      role's first `docker compose up` pulls it, and CI does not publish to GHCR until Phase 5)
+- [ ] `caddy_acme_staging: true` (G8): the `origin.*` records do not exist until Phase 6, so real issuance cannot
+      succeed yet and failed validations must land on the staging budget
 - [ ] `common`, `docker`, `postgres`, `caddy`, `deploy`, `backup` roles
 - [ ] Backup bucket and `pg_dump` timer
 - **Verify:** `make configure` twice; the second run reports zero `changed`
@@ -45,7 +49,10 @@ Each phase ends with a verifiable outcome and is independently revertible. The s
 
 ## Phase 6 — Edge cutover (the only user-visible moment)
 
-- [ ] Add `origin.kenesparta.dev` A → static IP; confirm Caddy issues its certificate
+- [ ] Add `origin.kenesparta.dev` A → static IP; flip `caddy_acme_staging` to false and re-run `make configure`;
+      confirm Caddy issues its certificate
+- [ ] The distribution's `custom_header` reads `ORIGIN_VERIFY_SECRET` from `secrets/prod.enc.env` — seeded in Phase 3
+      with the same value as `vault_origin_secret` (G13)
 - [ ] Repoint the app CloudFront origin from the container service to `origin.kenesparta.dev`, with the secret header
 - **Verify:** `kenesparta.dev` serves from the instance; a direct request to `origin.kenesparta.dev` without the secret
   returns 403

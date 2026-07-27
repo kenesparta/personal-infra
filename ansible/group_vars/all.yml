@@ -51,7 +51,10 @@ caddy_container: caddy
 # iterating on vhosts, then flip to false for the real issuance. G7 makes this
 # more than a nicety: .dev is HSTS-preloaded, so a bad cert means unreachable,
 # not degraded.
-caddy_acme_staging: false
+# true until Phase 6: origin.kenesparta.dev has no DNS record before then, so
+# real issuance cannot succeed and every retry would count against the prod
+# budget. Phase 6 adds the record, flips this to false and re-runs configure.
+caddy_acme_staging: true
 caddy_acme_email: kenesparta@pm.me
 
 # ── Deploy timer (AD-5, A5) ──────────────────────────────────────────────────
