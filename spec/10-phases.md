@@ -92,4 +92,13 @@ Each phase ends with a verifiable outcome and is independently revertible. The s
 
 ## Phase 9 — Validation
 
-- [ ] **Restore a `pg_dump` into a scratch database.** An untested backup is not a backup
+- [x] **Restore a `pg_dump` into a scratch database.** An untested backup is not a backup
+- *As executed (2026-07-27):* the rehearsal immediately earned its keep — the bucket's `postgres/` prefix was **empty**;
+  no timer run had ever landed an object (the one recorded firing predated the databases and its journal was lost to
+  the reboot). One manual `systemctl start pg-backup.service` on the hardened, guarded host exercised the whole
+  pipeline: both databases dumped, TOC-verified by the script, uploaded with resource-access credentials from instance
+  metadata — proving G16's guard blocks containers without blocking the host. The restore leg deliberately started from
+  the **bucket**, not the local copies (G4b's rebuilt-host scenario): `aws s3 cp` each dump, then
+  `docker exec -i postgres pg_restore -U postgres --no-owner -d rehearsal_<db>` per the script's own Phase 9 note.
+  Clean exits; every table matched live row-for-row (blog: 2 tables; budget: 4 tables including 30 `movimientos`).
+  Scratch databases dropped and `/tmp/rehearsal` removed afterwards.

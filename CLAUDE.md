@@ -4,15 +4,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-**The migration is complete through Phase 8 (2026-07-27).** The instance serves both projects in production:
+**The migration is complete — all phases 0–9 (2026-07-27).** The instance serves both projects in production:
 `kenesparta.dev` (blog) and `bot.kenesparta.dev` (budget Telegram bot), each behind its own CloudFront distribution →
 Caddy (Let's Encrypt) → container, with data restored into the host Postgres. The old estates are gone: the container
 services, ECR repositories, managed database, `../kenesparta.dev/tf` and `../budget-assistant/deploy/tf` are all
 destroyed or deleted; this repository's state (`s3://tf.kenesparta.dev/infra/prod/terraform.tfstate`) is the account's
 only live Terraform. The host is Ubuntu-Pro-attached and CIS Level 1 hardened — via the **G18-tailored profile only**,
-never bare `usg fix cis_level1_server`. **Remaining: Phase 9 (backup-restore rehearsal).** The final pre-migration
-dumps live at `s3://kenesparta-infra-backups/managed-db-final/`; the pre-hardening rollback snapshot is
-`pre-harden-2026-07-27`.
+never bare `usg fix cis_level1_server`. The backup path is proven end-to-end: dumps upload nightly to
+`s3://kenesparta-infra-backups/postgres/<db>/` and a bucket→scratch-database restore was rehearsed 2026-07-27 with
+row-for-row parity. The final pre-migration dumps live at `s3://kenesparta-infra-backups/managed-db-final/`; the
+pre-hardening rollback snapshot is `pre-harden-2026-07-27`.
 
 Read `spec/` before touching anything — it is rev 2.3 and records decisions that reverse parts of earlier revisions;
 `spec/10-phases.md` carries as-executed annotations where reality diverged from the plan.
