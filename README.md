@@ -19,18 +19,18 @@ This repository is absorbing a working estate from [`../kenesparta.dev`](../kene
 on a Lightsail **Container Service** fronted by CloudFront, pulling a private ECR image, backed by a Lightsail
 **managed** PostgreSQL.
 
-| Phase | What                                            | State |
-|-------|-------------------------------------------------|-------|
-| 0     | State consolidation (copy the state object)     | written, **not applied** |
-| 1     | Instance, static IP, firewall, snapshots        | written, **not applied** |
-| 2     | Verify the bootstrap                            | — |
-| 3     | Ansible: common, docker, postgres, caddy, deploy, backup | — |
-| 4     | Data migration: managed Postgres → host         | — |
-| 5     | Registry cutover: ECR → GHCR                    | — |
-| 6     | Edge cutover: CloudFront origin swap            | — |
-| 7     | Teardown: container service, ECR, `kenesparta.dev/tf` | — |
-| 8     | CIS hardening (deliberate, separate)            | — |
-| 9     | Validation: restore a backup for real           | — |
+| Phase | What                                                     | State                    |
+|-------|----------------------------------------------------------|--------------------------|
+| 0     | State consolidation (copy the state object)              | written, **not applied** |
+| 1     | Instance, static IP, firewall, snapshots                 | written, **not applied** |
+| 2     | Verify the bootstrap                                     | —                        |
+| 3     | Ansible: common, docker, postgres, caddy, deploy, backup | written, **not applied** |
+| 4     | Data migration: managed Postgres → host                  | —                        |
+| 5     | Registry cutover: ECR → GHCR                             | —                        |
+| 6     | Edge cutover: CloudFront origin swap                     | —                        |
+| 7     | Teardown: container service, ECR, `kenesparta.dev/tf`    | —                        |
+| 8     | CIS hardening (deliberate, separate)                     | —                        |
+| 9     | Validation: restore a backup for real                    | —                        |
 
 The site stays up throughout. The apex `A ALIAS → CloudFront` record never changes, so the host cutover in Phase 6 is a
 CloudFront **origin swap**, not a DNS change — no propagation wait, and rollback is the same one-line change in reverse.
@@ -39,33 +39,7 @@ CloudFront **origin swap**, not a DNS change — no propagation wait, and rollba
 
 ## Architecture
 
-```
-                    kenesparta.dev                cdn.kenesparta.dev
-                          │                              │
-                    A ALIAS │                       A ALIAS │
-                          ▼                              ▼
-                  CloudFront (ACM)                CloudFront (ACM)
-                          │  https-only                  │
-                          │  + X-Origin-Verify           ▼
-                          ▼                        S3 (OAC, private)
-           origin.kenesparta.dev ──A──► static IP
-                                          │
-                              ┌───────────┴───────────┐
-                              │   Lightsail instance   │
-                              │   small_3_0 · 2 GB     │
-                              │                        │
-                              │   Caddy :80/:443       │  Let's Encrypt (HTTP-01)
-                              │     │  403 without     │  on the origin-* names
-                              │     │  the secret      │
-                              │     ▼                  │
-                              │   blog:3000  …up to 4  │  ← GHCR, pulled by systemd timer
-                              │     │                  │
-                              │   postgres 127.0.0.1   │  ← one DB + role per project
-                              │     │                  │
-                              └─────┼──────────────────┘
-                                    ▼
-                            Lightsail bucket (pg_dump)
-```
+![architecture.svg](assets/img/architecture.svg)
 
 **Why two certificates.** An ACM certificate can never be installed on a Lightsail instance — standard ACM public certs
 are non-exportable, and Lightsail's own certificate service attaches only to load balancers, container services and CDN
@@ -84,12 +58,12 @@ this costs nothing extra.
 
 ## Prerequisites
 
-| Tool                | Why                                                  |
-|---------------------|------------------------------------------------------|
-| Terraform ≥ 1.10    | Native S3 state locking (`use_lockfile`); CI pins 1.15.8 |
-| AWS CLI v2          | SSO login, state seeding, Lightsail lookups          |
-| Ansible             | Host configuration (Phase 3 onward)                  |
-| `sops` + `age`      | Decrypts `secrets/prod.enc.env`                      |
+| Tool             | Why                                                      |
+|------------------|----------------------------------------------------------|
+| Terraform ≥ 1.10 | Native S3 state locking (`use_lockfile`); CI pins 1.15.8 |
+| AWS CLI v2       | SSO login, state seeding, Lightsail lookups              |
+| Ansible          | Host configuration (Phase 3 onward)                      |
+| `sops` + `age`   | Decrypts `secrets/prod.enc.env`                          |
 
 Also needed:
 
@@ -158,17 +132,80 @@ aws lightsail get-regions --include-availability-zones --query 'regions[?name==`
 
 ### Phase 3 onward — Ansible
 
-Not yet written. The targets exist and will work once `ansible/` lands:
-
 ```bash
+make deps          # install community.docker (once per workstation)
+make vault/create  # group_vars/vault.yml from the committed template, then fill it in
 make check-ssh     # ansible -m ping   (Phase 2 gate)
 make configure     # site.yml — everything except hardening
+make configure     # ...again: the second run must report 0 changed (acceptance criterion 2)
 make harden        # harden.yml — SNAPSHOT FIRST, see below
 ```
 
 `make inventory` regenerates `ansible/inventory/hosts.ini` from `terraform output -raw static_ip`. Terraform owns the
 IP; Ansible reads it. It is deliberately *not* a `local_file` resource — that would put a generated local file under
 state management and couple `terraform destroy` to Ansible's working tree.
+
+The first `make check-ssh` on a new instance **will refuse to connect**: `host_key_checking` is on and the host is not
+in `known_hosts` yet. That is the control working. Compare the fingerprint against the Lightsail console, then:
+
+```bash
+ssh-keyscan -H "$(terraform -chdir=terraform output -raw static_ip)" >> ~/.ssh/known_hosts
+```
+
+One credential must be created by hand before `make configure` succeeds: a **GHCR PAT** with `read:packages` and nothing
+else, into `vault_ghcr_token`. It is not a Terraform resource because a PAT is a GitHub credential, and AD-10 exists
+precisely so the host holds one credential instead of a refreshing ECR token.
+
+The backup path needs **no credential at all**. Lightsail buckets support *resource access* — the service's equivalent
+of an EC2 instance profile — so `terraform apply` attaches the instance to the bucket and the AWS CLI resolves
+short-lived credentials from instance metadata. Nothing to store, nothing to rotate; revoking is detaching the instance.
+`make configure` proves it works with an `aws s3 ls` at configure time rather than letting you find out at 03:00.
+
+That convenience has a sharp edge, and the `docker` role blunts it: metadata is reachable from *any* container on a
+Docker bridge, so without intervention a compromised application container could read the same credentials and help
+itself to every project's database dumps. The guard is a **native nftables** table of its own, dropping traffic to
+`169.254.169.254` at the `forward` hook — the path containers use and the host does not, so `pg-backup.sh` keeps
+working. See G5 and G16; do not remove it.
+
+```bash
+ssh ubuntu@HOST sudo nft list table inet personal_infra_guard   # the rule, and its packet counter
+```
+
+`iptables -S` will **not** show it. That is not a bug — it lives in its own table rather than in Docker's `DOCKER-USER`
+chain, which is what makes it survive Docker rebuilding its firewall on every daemon start and lets it be ordered
+*before* `docker.service` instead of after. Also: never enable Ubuntu's `nftables.service` — its stock
+`/etc/nftables.conf` starts with `flush ruleset` and would wipe Docker's rules.
+
+#### What the roles own
+
+| Role        | Produces                                                                                                                   |
+|-------------|----------------------------------------------------------------------------------------------------------------------------|
+| `common`    | apt cache, base packages, `unattended-upgrades` (security only, never auto-reboots), UTC, `fail2ban`                       |
+| `docker`    | Engine + Compose from Docker's apt repo, log rotation, `live-restore`, the `web` network, GHCR login, metadata guard (G16) |
+| `postgres`  | One `postgres:18` container on `web`, no published port, tuned for 2 GB, one DB + role per project                         |
+| `caddy`     | The only container publishing host ports; templated Caddyfile, LE certs, the origin gate                                   |
+| `deploy`    | Per-project Compose stack, plus `personal-infra-deploy@<name>.timer` pulling from GHCR every 10 min                        |
+| `backup`    | `/usr/local/bin/pg-backup.sh` and a daily timer writing timestamped dumps to the Lightsail bucket                          |
+| `hardening` | `pro attach`, `pro enable usg`, `usg fix cis_level1_server` — **`harden.yml` only**                                        |
+
+Postgres runs as a container rather than an apt package (AD-3). The reason is not preference: applications are
+containers on a bridge network, and `127.0.0.1` inside such a container is its own namespace, not the host's — so a
+host-installed Postgres bound to loopback is unreachable from precisely the things that need it. As a container on
+`web` it is reachable as `postgres:5432` and *nothing* on the host listens on 5432 at all.
+
+#### Useful once it is running
+
+```bash
+psql()  { ssh ubuntu@HOST docker exec -it postgres psql -U postgres "$@"; }
+ssh ubuntu@HOST sudo systemctl list-timers 'personal-infra-deploy@*' pg-backup.timer
+ssh ubuntu@HOST sudo journalctl -u personal-infra-deploy@blog.service -n 50
+ssh ubuntu@HOST sudo /usr/local/bin/pg-backup.sh          # force a backup now
+```
+
+Rotating a Postgres password is two-sided, like the origin secret: edit `make vault/edit`, then
+`make configure -e postgres_rotate_passwords=true` — that ALTERs the role and rewrites the project's `DATABASE_URL` in
+the same run. Without the flag the role is created once and its password is never touched again, which is what keeps a
+second `make configure` at zero `changed`.
 
 ---
 
@@ -186,9 +223,22 @@ deploy timers — Terraform reads it with `yamldecode`, Ansible with `vars_files
   database: api
 ```
 
+Then add its Postgres password to the vault — the one thing that cannot live in `projects.yml`, since that file is
+committed:
+
+```bash
+make vault/edit     # vault_postgres_passwords: { api: "<openssl rand -hex 32>" }
+make configure
+```
+
+`site.yml` refuses to run if any project lacks one, rather than half-configuring the host. Names must be lowercase
+`[a-z][a-z0-9_]*` — a project's name becomes a SQL identifier, a container name, a Docker DNS label and a systemd unit
+instance, and that character set is safe in all four.
+
 The ceiling is **four services**. RAM is the binding constraint on a 2 GB host: ~350 MB OS + Docker, ~400 MB tuned
-Postgres, ~50 MB Caddy, ~100 MB per service. Growing past four means resizing to `medium_3_0`, which is a
-stop / change-bundle / start on a snapshot — minutes of downtime, no redesign.
+Postgres, ~50 MB Caddy, ~100 MB per service. Growing past four means resizing to `medium_3_0`, which is a stop /
+change-bundle / start on a snapshot — minutes of downtime, no redesign. `site.yml` asserts the ceiling, so adding a
+fifth fails fast instead of discovering it through the OOM killer.
 
 ---
 
@@ -210,8 +260,8 @@ Full list in [`spec/12-gotchas.md`](spec/12-gotchas.md). The ones with no undo:
 - **Let's Encrypt limits are per registered domain** — 50 certs/week shared across every `origin-*` name. Caddy's
   `/data` volume must persist across container recreation, and `.dev` is HSTS-preloaded, so a TLS error makes the site
   unreachable rather than merely degraded. Iterate against LE staging.
-- **The origin secret is a two-sided rotation.** It lives in Terraform state (`custom_header`) and Ansible Vault (Caddy's
-  comparison). Change Terraform first, then Ansible — the reverse order 403s every request in the gap.
+- **The origin secret is a two-sided rotation.** It lives in Terraform state (`custom_header`) and Ansible Vault
+  (Caddy's comparison). Change Terraform first, then Ansible — the reverse order 403s every request in the gap.
 
 ---
 
@@ -221,7 +271,18 @@ Two mechanisms, deliberately not merged:
 
 - **sops + age** — `secrets/prod.enc.env`, committed encrypted, read by Terraform's sops provider. Copied from the
   application repo; same age recipient, so it decrypts identically.
-- **ansible-vault** — `ansible/group_vars/vault.yml` holds Postgres passwords, the GHCR PAT, and the origin secret.
+- **ansible-vault** — `ansible/group_vars/vault.yml` holds the Postgres passwords, the GHCR PAT and the origin secret.
+  `vault.yml.example` is the committed template and carries key names only. There is deliberately no AWS credential in
+  it: the backup uses Lightsail resource access instead (G5).
+
+```bash
+make vault/create   # from the template, then encrypt
+make vault/edit     # $EDITOR on the decrypted contents
+make vault/check    # confirm it is encrypted, not plaintext (run before committing)
+```
+
+The vault password comes from `~/.config/personal-infra/vault-pass` when that file exists, and is prompted for
+otherwise — so `make configure` works unattended on your machine and safely on a fresh clone.
 
 No secret is ever a Terraform output, and none may appear in `terraform.tfvars.example`.
 
@@ -255,35 +316,23 @@ make secrets/recipient-add AGE=age1…    # then:  make secrets/updatekeys
 make secrets/recipient-rm  AGE=age1…    # then:  make secrets/updatekeys && make secrets/rotate
 ```
 
-Removal needs both. `updatekeys` only drops the key from the file's metadata — the removed holder already knows the
-data key of every committed version, and `secrets/rotate` (a *new* data key) is what actually revokes access.
-
----
-
-## Cost
-
-| Line item                           | Current    | Target     |
-|-------------------------------------|------------|------------|
-| Lightsail Container Service (nano)  | $7.00      | —          |
-| Lightsail Small instance            | —          | $12.00     |
-| Lightsail managed PostgreSQL        | ~$15.00    | —          |
-| Auto-snapshots (60 GB, incremental) | —          | ~$1.50     |
-| Backup bucket (5 GB)                | —          | $1.00      |
-| ECR storage                         | ~$1.00     | —          |
-| Route 53 zones (×2) + DNSSEC KMS    | $3.00      | $3.00      |
-| CloudFront (app + cdn) + S3         | ~$1.60     | ~$1.60     |
-| **Total**                           | **~$27.60**| **~$19.10**|
-
-The migration *saves* ~$8.50/mo: retiring the managed database more than pays for the instance.
+Removal needs both. `updatekeys` only drops the key from the file's metadata — the removed holder already knows the data
+key of every committed version, and `secrets/rotate` (a *new* data key) is what actually revokes access.
 
 ---
 
 ## Where things live
 
-| File            | Contains                                                        |
-|-----------------|-----------------------------------------------------------------|
-| `spec/`         | Source of truth — decisions, rejected alternatives, phases, gotchas (index: `spec/README.md`) |
-| `CLAUDE.md`     | Guidance for Claude Code sessions                               |
-| `projects.yml`  | The project fan-out, shared by both tools                       |
-| `terraform/legacy.tf` | Container service + ECR — everything deleted in Phase 7   |
-| `terraform/main.tf`   | The new host (Phase 1)                                    |
+| File                   | Contains                                                                                      |
+|------------------------|-----------------------------------------------------------------------------------------------|
+| `spec/`                | Source of truth — decisions, rejected alternatives, phases, gotchas (index: `spec/README.md`) |
+| `CLAUDE.md`            | Guidance for Claude Code sessions                                                             |
+| `projects.yml`         | The project fan-out, shared by both tools                                                     |
+| `terraform/legacy.tf`  | Container service + ECR — everything deleted in Phase 7                                       |
+| `terraform/main.tf`    | The new host (Phase 1)                                                                        |
+| `terraform/storage.tf` | The backup bucket (Phase 3) — its access key deliberately not in state                        |
+| `ansible/site.yml`     | Everything except hardening; `harden.yml` is separate on purpose (A4)                         |
+| `ansible/roles/`       | `common` `docker` `postgres` `caddy` `deploy` `backup` `hardening`                            |
+
+Any additive `.tf` file must also be listed in the `plan/phase0` target, which moves them aside so the Phase 0 gate
+keeps answering only "did the state copy land correctly?" — currently `main.tf`, `outputs-phase1.tf`, `storage.tf`.

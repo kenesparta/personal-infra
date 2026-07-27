@@ -1,0 +1,70 @@
+---
+# pg_dump to the Lightsail bucket on a timer (spec §5.7, §9.2). Acceptance
+# criterion 10 is not "a backup exists" but "a backup has been RESTORED at least
+# once" — Phase 9. An untested backup is not a backup.
+
+- name: Create the local backup directory
+  ansible.builtin.file:
+    path: "{{ backup_local_dir }}"
+    state: directory
+    owner: root
+    group: root
+    # Dumps are readable plaintext of every database on the host.
+    mode: "0700"
+
+# No credentials task, and no credentials file. The instance is attached to the
+# bucket by aws_lightsail_bucket_resource_access (terraform/storage.tf), which
+# is Lightsail's equivalent of an instance profile: the AWS CLI resolves
+# credentials from instance metadata on its own. See G5.
+
+- name: Verify the instance can reach the backup bucket
+  # Proves resource access is actually in effect NOW, at configure time, rather
+  # than discovering at 03:00 that the attachment was never applied. Costs one
+  # ListObjects call and is the only check that distinguishes "credentials
+  # resolve" from "the timer is installed".
+  ansible.builtin.command: aws s3 ls s3://{{ backup_bucket }}/
+  environment:
+    AWS_DEFAULT_REGION: "{{ backup_region }}"
+  changed_when: false
+  register: backup_bucket_probe
+  failed_when: backup_bucket_probe.rc != 0
+
+- name: Install the backup script
+  # A6, as clarified in rev 2.1: this is an artefact Ansible templates, not a
+  # step Ansible runs. systemd's ExecStart= has no shell, so it can neither
+  # redirect pg_dump's output nor build a timestamped object key — and putting
+  # this logic in a quoted `sh -c` inside the unit would be strictly worse to
+  # read and to debug.
+  ansible.builtin.template:
+    src: pg-backup.sh.j2
+    dest: /usr/local/bin/pg-backup.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the backup unit
+  ansible.builtin.template:
+    src: pg-backup.service.j2
+    dest: /etc/systemd/system/pg-backup.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Install the backup timer
+  ansible.builtin.template:
+    src: pg-backup.timer.j2
+    dest: /etc/systemd/system/pg-backup.timer
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Reload systemd before enabling the timer
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable the backup timer
+  ansible.builtin.systemd_service:
+    name: pg-backup.timer
+    enabled: true
+    state: started

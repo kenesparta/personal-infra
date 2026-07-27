@@ -1,0 +1,39 @@
+# Managed by Ansible (personal-infra, role: deploy) — edits will be reverted.
+#
+# Instantiated per project: personal-infra-deploy@blog.service. %i is the
+# project's `name` from projects.yml, which is also its directory name.
+#
+# AD-5 — this is the entire deployment mechanism. CI pushes an image to GHCR;
+# this pulls it. Nothing connects inbound to the host to deploy, which is why
+# port 22 can stay restricted to a handful of CIDRs (acceptance criterion 6)
+# instead of being opened to GitHub's rotating runner ranges.
+
+[Unit]
+Description=Pull and restart %i from GHCR
+Documentation=https://github.com/kenesparta/personal-infra
+Requires=docker.service
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory={{ infra_root }}/projects/%i
+
+# Fails the unit if the project directory is gone, rather than silently
+# succeeding at doing nothing.
+ExecStartPre=/usr/bin/test -f {{ infra_root }}/projects/%i/docker-compose.yml
+
+ExecStart=/usr/bin/docker compose pull --quiet
+ExecStart=/usr/bin/docker compose up -d --remove-orphans
+
+# Each pull leaves the previous image dangling. On a 60 GB disk with a timer
+# running every {{ deploy_interval }}, that is the one thing here that grows without
+# bound. `prune` only removes images no container references.
+ExecStart=/usr/bin/docker image prune -f
+
+# A failed pull (GHCR down, PAT expired) must not take down what is already
+# running. The unit fails, the timer tries again on the next tick, and the
+# current container keeps serving.
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

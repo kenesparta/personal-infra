@@ -1,0 +1,65 @@
+# Managed by Ansible (personal-infra, role: caddy) — edits will be reverted.
+# Generated from projects.yml (spec §5.3), one vhost per project.
+# NOTE: no blank line before the global block — `caddy fmt` removes it, and a
+# formatting warning on every start is noise that teaches you to ignore logs.
+{
+	email {$ACME_EMAIL}
+{% if caddy_acme_staging %}
+
+	# G8/G7 — STAGING. Certificates issued here are NOT trusted by browsers;
+	# this exists so that iterating on vhosts cannot burn the 50-per-week
+	# budget that every origin-* name shares with the rest of kenesparta.dev.
+	# Flip caddy_acme_staging to false for real issuance.
+	acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+{% endif %}
+}
+
+# AD-8 — the origin is publicly reachable and cannot be firewalled to
+# CloudFront: Lightsail takes plain CIDRs and cannot reference the
+# origin-facing managed prefix list, whose ranges rotate anyway (G11). This
+# shared header is the whole lockdown, so it is applied to every vhost.
+#
+# Written as `handle` blocks rather than the bare `respond`/`reverse_proxy` pair
+# sketched in spec §9.3. Bare directives are evaluated in Caddy's built-in
+# directive order rather than in written order; `handle` blocks are mutually
+# exclusive and run in the order given. That difference is the difference
+# between a gate that fails closed and one that fails open, so it is not worth
+# depending on a lookup table for.
+(origin_gate) {
+	@no_secret not header X-Origin-Verify "{$ORIGIN_SECRET}"
+	handle @no_secret {
+		respond 403
+	}
+}
+
+{% for p in projects %}
+# {{ p.name }} — public: {{ p.hostname }}
+{{ p.origin }} {
+	import origin_gate
+
+	handle {
+		# Resolved by Docker DNS on the `{{ docker_network }}` network. The name is the
+		# project's container_name, set by the deploy role.
+		reverse_proxy {{ p.name }}:{{ p.port }}
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}
+
+{% endfor %}
+# There is deliberately NO catch-all site. Verified behaviour for a hostname not
+# listed above (a scan of the static IP, or a stale DNS record):
+#
+#   :443  the TLS handshake FAILS — no certificate matches the SNI, so the
+#         connection never reaches HTTP routing and nothing is served.
+#   :80   Caddy's automatic HTTP->HTTPS redirect answers 308 for ANY host. It is
+#         a catch-all by design and does not shadow the ACME HTTP-01 challenge,
+#         which Caddy handles ahead of it — which is the whole reason port 80 is
+#         open to the world (G11, AD-8).
+#
+# Adding an explicit catch-all to tidy up that 308 is not worth it: any site
+# block covering :443 makes Caddy want a certificate for arbitrary SNI, and on
+# an HSTS-preloaded domain (G7) a TLS mistake is an outage, not a warning.

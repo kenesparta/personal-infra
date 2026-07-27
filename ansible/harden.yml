@@ -1,0 +1,53 @@
+---
+# CIS Level 1 hardening. SEPARATE FROM site.yml ON PURPOSE (A4).
+#
+# `usg fix cis_level1_server` rewrites sshd configuration, file permissions and
+# kernel parameters. It can lock you out, and the box has no console worth the
+# name. The required procedure, in order:
+#
+#   1. Snapshot:  aws lightsail create-instance-snapshot \
+#                   --instance-name kenesparta-host \
+#                   --instance-snapshot-name pre-harden-$(date +%F)
+#   2. make harden
+#   3. Open a SECOND terminal and confirm SSH still works — BEFORE closing the
+#      first. The first terminal is the only way back in if it does not.
+#   4. make configure — confirm hardening broke nothing (and still 0 changed).
+
+- name: Harden the application host
+  hosts: app
+  become: true
+
+  pre_tasks:
+    - name: Confirm the snapshot exists
+      # Deliberately a human gate, not an automated check: the host has no AWS
+      # credentials to verify a snapshot with (G5), and this playbook is always
+      # run interactively. Typing the word is the point.
+      ansible.builtin.pause:
+        prompt: |
+
+          usg fix can lock you out of this host.
+
+          Snapshot taken?  aws lightsail create-instance-snapshot \
+                             --instance-name kenesparta-host \
+                             --instance-snapshot-name pre-harden-$(date +%F)
+
+          Type SNAPSHOTTED to continue, anything else to abort
+      register: harden_confirm
+
+    - name: Abort unless the snapshot was confirmed
+      ansible.builtin.assert:
+        quiet: true
+        that: harden_confirm.user_input | trim == "SNAPSHOTTED"
+        fail_msg: "Aborted — nothing was changed. Take the snapshot first (A4)."
+
+  roles:
+    - hardening
+
+  post_tasks:
+    - name: Say what to do next
+      ansible.builtin.debug:
+        msg: >-
+          Hardening applied. NOW, before closing this terminal: open a second
+          one and confirm `ssh ubuntu@{{ ansible_host }}` succeeds. Then run
+          `make configure` to confirm the roles still converge. A reboot is
+          required for some kernel parameters to take effect.

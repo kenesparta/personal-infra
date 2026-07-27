@@ -21,10 +21,12 @@ ifneq ($(strip $(TF_VAR_aws_sso_profile)),)
 BACKEND_PROFILE := -backend-config="profile=$(TF_VAR_aws_sso_profile)"
 endif
 
-.PHONY: help login fmt validate init plan apply state/seed plan/phase0 inventory configure harden check-ssh \
+.PHONY: help login fmt validate init plan apply state/seed plan/phase0 \
+        deps inventory configure harden check-ssh syntax \
+        vault/create vault/edit vault/view vault/check \
         secrets/show secrets/keys secrets/get secrets/edit secrets/set secrets/unset secrets/check \
         secrets/recipients secrets/recipient-add secrets/recipient-rm secrets/updatekeys secrets/rotate \
-        .sops-guard .age-guard
+        .sops-guard .age-guard .vault-guard
 
 # Groups are the `# ── Title ──` banners below, so section names live in exactly
 # one place; a target's help text is the `## …` on its own line.
@@ -67,14 +69,19 @@ state/seed: ## Phase 0 step 1 — copy the old state object to the new key (idem
 	@aws s3 cp "$(OLD_STATE)" "$(NEW_STATE)" $(if $(TF_VAR_aws_sso_profile),--profile $(TF_VAR_aws_sso_profile),)
 
 # The gate for the whole migration. Plans the MIGRATED configuration only, with
-# the Phase 1 host resources moved aside, so the question it answers is purely
+# the additive resources moved aside, so the question it answers is purely
 # "did the state copy land correctly?" — uncontaminated by new resources.
 # Exit 0 = no changes (pass). Exit 2 = drift (stop and investigate).
+#
+# EVERY additive .tf file must be listed here. main.tf and outputs-phase1.tf are
+# Phase 1; storage.tf is the Phase 3 backup bucket. Forget one and the gate goes
+# red for a resource that is *supposed* to be new, which is indistinguishable
+# from the failure it exists to catch.
 plan/phase0: ## Phase 0 step 2 — GATE: must report "No changes"
 	@set -e; \
 	hold=$$(mktemp -d); \
 	trap 'mv "$$hold"/*.tf terraform/ 2>/dev/null || true; rmdir "$$hold" 2>/dev/null || true' EXIT; \
-	mv terraform/main.tf terraform/outputs-phase1.tf "$$hold"/; \
+	mv terraform/main.tf terraform/outputs-phase1.tf terraform/storage.tf "$$hold"/; \
 	$(TF) init $(BACKEND_PROFILE) >/dev/null; \
 	echo "── Phase 0 gate: migrated resources only ──"; \
 	$(TF) plan -detailed-exitcode -input=false
@@ -181,15 +188,62 @@ secrets/rotate: .sops-guard .age-guard ## new data key + re-encrypt every value 
 # ── Ansible ──────────────────────────────────────────────────────────────────
 # Terraform owns the IP; Ansible reads it rather than duplicating it. NOT a
 # local_file resource — that would couple `terraform destroy` to Ansible's tree.
+#
+# Vault (ansible-vault) is a DIFFERENT mechanism from the sops/age secrets
+# above and the two are deliberately not merged: sops guards what Terraform
+# reads, vault guards what Ansible writes onto the host. See spec §9.4.
+VAULT_FILE      := ansible/group_vars/vault.yml
+VAULT_PASS_FILE ?= $(HOME)/.config/personal-infra/vault-pass
+
+# Use the password file when it exists, otherwise prompt. Keeps `make configure`
+# working both unattended and on a fresh clone. ansible-vault prompts by default
+# when given no password file, so VAULT_PW_ARGS is simply empty in that case.
+ifneq ($(wildcard $(VAULT_PASS_FILE)),)
+VAULT_ARGS    := --vault-password-file $(VAULT_PASS_FILE)
+VAULT_PW_ARGS := --vault-password-file $(VAULT_PASS_FILE)
+else
+VAULT_ARGS    := --ask-vault-pass
+VAULT_PW_ARGS :=
+endif
+
+deps: ## install the Ansible collections from ansible/requirements.yml
+	@ansible-galaxy collection install -r ansible/requirements.yml
+
 inventory: ## regenerate ansible/inventory/hosts.ini from terraform output
 	@printf '[app]\n%s ansible_user=ubuntu\n' "$$($(TF) output -raw static_ip)" > ansible/inventory/hosts.ini
 	@cat ansible/inventory/hosts.ini
 
-configure: inventory ## run site.yml (everything except hardening)
-	@cd ansible && ansible-playbook -i inventory/hosts.ini site.yml
+configure: inventory .vault-guard ## run site.yml (everything except hardening)
+	@cd ansible && ansible-playbook -i inventory/hosts.ini $(VAULT_ARGS) site.yml
 
-harden: inventory ## run harden.yml — SNAPSHOT FIRST, see spec A4
-	@cd ansible && ansible-playbook -i inventory/hosts.ini harden.yml
+harden: inventory .vault-guard ## run harden.yml — SNAPSHOT FIRST, see spec A4
+	@cd ansible && ansible-playbook -i inventory/hosts.ini $(VAULT_ARGS) harden.yml
 
 check-ssh: inventory ## verify the host accepts an Ansible connection (Phase 2 gate)
 	@cd ansible && ansible -i inventory/hosts.ini app -m ping
+
+syntax: ## parse both playbooks without touching the host
+	@cd ansible && ansible-playbook --syntax-check -i localhost, site.yml harden.yml
+
+# ── Ansible vault ────────────────────────────────────────────────────────────
+
+.vault-guard:
+	@test -f $(VAULT_FILE) || { echo "$(VAULT_FILE) missing — run: make vault/create"; exit 1; }
+
+vault/create: ## create group_vars/vault.yml from the committed template
+	@test ! -f $(VAULT_FILE) || { echo "$(VAULT_FILE) already exists — use vault/edit"; exit 1; }
+	@cp $(VAULT_FILE).example $(VAULT_FILE)
+	@ansible-vault encrypt $(VAULT_PW_ARGS) $(VAULT_FILE)
+	@echo "created and encrypted $(VAULT_FILE) — now: make vault/edit  (fill in every empty value)"
+
+vault/edit: .vault-guard ## edit the encrypted vault in $EDITOR
+	@ansible-vault edit $(VAULT_PW_ARGS) $(VAULT_FILE)
+
+vault/view: .vault-guard ## decrypt the vault to stdout (plaintext!)
+	@ansible-vault view $(VAULT_PW_ARGS) $(VAULT_FILE)
+
+vault/check: ## confirm the vault exists and is encrypted, not plaintext
+	@test -f $(VAULT_FILE) || { echo "$(VAULT_FILE) missing — run: make vault/create"; exit 1; }
+	@head -c 15 $(VAULT_FILE) | grep -q '^\$$ANSIBLE_VAULT' \
+	  && echo "$(VAULT_FILE): encrypted" \
+	  || { echo "$(VAULT_FILE) IS PLAINTEXT — do not commit (acceptance criterion 3)"; exit 1; }

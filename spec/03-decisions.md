@@ -55,14 +55,36 @@ failure without removing the first.
 
 ## AD-3 — Self-hosted PostgreSQL, one instance, one database per project
 
-**Chosen:** One Postgres process on the host, one `DATABASE` and one role per project, bound to `127.0.0.1`.
+**Chosen:** **One** Postgres instance for the whole host, one `DATABASE` and one role per project. It runs as a single
+container on the shared `web` network, reachable only as `postgres:5432` from other containers, publishing **no** port
+to the host.
 
-**Rationale:** Four Postgres containers would each carry independent `shared_buffers`, WAL, and autovacuum overhead —
+**Rationale:** Four Postgres *instances* would each carry independent `shared_buffers`, WAL, and autovacuum overhead —
 roughly 4× the fixed cost for the same data, which a 2 GB host cannot absorb (AD-1). One instance means one backup job
 and one upgrade path. Replaces the current Lightsail managed database, saving ~$15/mo.
 
+*Amended in rev 2.1 — containerized rather than apt-installed on the host.* The original wording said "one Postgres
+process on the host … bound to `127.0.0.1`", which cannot be reconciled with the rest of the design: applications are
+containers on a bridge network (AD-8, §9.3's `reverse_proxy blog:3000`), and `127.0.0.1` inside such a container is its
+own network namespace, not the host's. The three ways to close that gap were:
+
+- **Containerize Postgres on `web`** *(chosen)* — applications resolve `postgres:5432` by Docker DNS. Nothing listens on
+  a host interface at all, so the exposure property AC-8 was protecting is strengthened rather than weakened, and there
+  is no host-vs-daemon start-ordering hazard.
+- *Host install listening on the bridge gateway* — keeps the apt install, but `listen_addresses` must then name a
+  Docker-owned IP. If `postgresql.service` wins the boot race against `docker.service` the address does not exist yet
+  and Postgres **fails to start**, so it needs a systemd ordering drop-in coupling the database to the container
+  runtime. Rejected as the more fragile of the two.
+- *Host install plus a unix-socket bind-mount* — strictly satisfies the original `127.0.0.1`-only wording, but `/run` is
+  a tmpfs: on reboot Docker can create an empty root-owned `/run/postgresql` before Postgres starts, which then
+  prevents Postgres from creating its socket. A start-order deadlock for no security gain. Rejected.
+
+**Consequences.** The `postgres` role manages a Compose stack instead of an apt package; tuning is passed as `-c` flags
+(§9.5); databases, roles and backups are driven through `docker exec`; and the data directory is a named Docker volume,
+which — like Caddy's `/data` (G8) — is load-bearing and must survive container recreation.
+
 **Rejected:** Lightsail managed database (the value is automated backups, replaceable by a `pg_dump` cron for ~$1);
-Supabase and equivalent BaaS, per user constraint.
+Supabase and equivalent BaaS, per user constraint; one Postgres container *per project* (the 4× overhead above).
 
 **Migration note:** the production write path is the `ingest` CLI only — the web app never writes. Postgres is therefore
 effectively read-only in production, so the dump/restore carries no concurrent-write hazard.

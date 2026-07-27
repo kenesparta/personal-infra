@@ -83,6 +83,21 @@ variable "ssh_public_key_path" {
   default     = "~/.ssh/personal-infra.pub"
 }
 
+# ── Backups (Phase 3) ────────────────────────────────────────────────────────
+
+variable "backup_bucket_name" {
+  description = "Lightsail bucket for pg_dump artifacts. Globally unique across all Lightsail accounts; change if the default is taken. Lowercase letters, digits and hyphens only — no dots."
+  type        = string
+  default     = "kenesparta-infra-backups"
+
+  validation {
+    # Lightsail bucket naming: 3–54 chars, lowercase alphanumeric and hyphens,
+    # must start and end alphanumeric. Dots are rejected (unlike plain S3).
+    condition     = can(regex("^[a-z0-9][a-z0-9-]{1,52}[a-z0-9]$", var.backup_bucket_name))
+    error_message = "backup_bucket_name must be 3-54 chars, lowercase alphanumeric or hyphen, starting and ending alphanumeric."
+  }
+}
+
 variable "ssh_allowed_cidrs" {
   description = "Source CIDRs permitted on port 22. Home/office IPs only."
   type        = list(string)

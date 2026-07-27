@@ -1,0 +1,18 @@
+{
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "10m",
+    "max-file": "3"
+  },
+  "live-restore": true
+}
+{#
+   Managed by Ansible (personal-infra, role: docker) — edits will be reverted.
+
+   log-opts: without rotation, one chatty container fills 60 GB and takes the
+   database down with it. Docker's default json-file driver has NO limit.
+
+   live-restore: containers keep running across a daemon restart. On a
+   single-host estate that turns "docker upgrade" and "daemon.json changed"
+   from an outage into a no-op for anything already up.
+#}

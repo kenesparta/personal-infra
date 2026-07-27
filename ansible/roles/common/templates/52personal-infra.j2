@@ -1,0 +1,24 @@
+// Managed by Ansible (personal-infra, role: common) — edits will be reverted.
+//
+// Security updates only. This host has no second node to fail over to (C8), so
+// the appetite for an automatic upgrade breaking a service at 06:00 is zero.
+Unattended-Upgrade::Allowed-Origins {
+    "${distro_id}:${distro_codename}-security";
+    "${distro_id}ESMApps:${distro_codename}-apps-security";
+    "${distro_id}ESM:${distro_codename}-infra-security";
+};
+
+// Docker is pinned deliberately: an unattended docker-ce upgrade restarts the
+// daemon, which takes every container down mid-request. Upgrade it by hand.
+Unattended-Upgrade::Package-Blacklist {
+    "docker-ce";
+    "docker-ce-cli";
+    "containerd.io";
+};
+
+// NEVER reboot on its own. A single host with no HA should come back when
+// someone is watching; `/var/run/reboot-required` says when that is due.
+Unattended-Upgrade::Automatic-Reboot "false";
+
+Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+Unattended-Upgrade::Remove-Unused-Dependencies "true";

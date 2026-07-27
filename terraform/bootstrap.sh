@@ -1,6 +1,10 @@
-#!/usr/bin/env bash
+#!/bin/sh
 #
 # Lightsail user_data — runs ONCE, at instance creation.
+#
+# POSIX sh ONLY (G4): Lightsail's init wrapper inlines this script and runs it
+# under dash, ignoring the shebang. A single bashism aborts the whole file —
+# `set -o pipefail` did exactly that on the first build of the host.
 #
 # ┌──────────────────────────────────────────────────────────────────────────┐
 # │ WARNING (spec G4): user_data is ForceNew on aws_lightsail_instance.       │
@@ -14,7 +18,7 @@
 #
 # The SSH key is NOT installed here — Lightsail does that from key_pair_name.
 #
-set -euxo pipefail
+set -eux
 
 export DEBIAN_FRONTEND=noninteractive
 

@@ -1,0 +1,45 @@
+# Template for group_vars/vault.yml (spec §9.4). KEY NAMES ONLY — never commit a
+# value here; vault.yml itself is ansible-vault encrypted and is the only place
+# a value belongs (A2, acceptance criterion 3).
+#
+#   make vault/create     # create group_vars/vault.yml from this template
+#   make vault/edit       # edit it later
+#
+# Generate passwords with:  openssl rand -hex 32
+#
+# Hex rather than base64 on purpose. The Postgres passwords are interpolated
+# into a DATABASE_URL; the deploy role percent-encodes them correctly either
+# way, but a hex value survives being copied through a shell, a psql prompt or
+# a container env var without anyone having to think about quoting.
+
+# Superuser password for the Postgres container. Only reachable over the `web`
+# network (AD-3) and via `docker exec`, but it is still a real credential.
+vault_postgres_superuser_password: ""
+
+# One per entry in projects.yml, keyed by `name`. The postgres role creates the
+# role with this password; the deploy role writes it into the project's
+# DATABASE_URL. Keep them genuinely distinct — `web` is a flat network and role
+# passwords are the only thing separating one project's data from another's
+# (G15).
+vault_postgres_passwords:
+  blog: ""
+
+# Must be byte-identical to the CloudFront distribution's X-Origin-Verify
+# custom_header. Rotating it is two-sided and ORDERED: Terraform first, then
+# here, or every request 403s in the gap (G13).
+vault_origin_secret: ""
+
+# GHCR pull credentials (AD-10). The PAT needs `read:packages` and NOTHING else
+# — this token sits on a single-tenant host with no secret management.
+vault_ghcr_username: kenesparta
+vault_ghcr_token: ""
+
+# NOTE: there are deliberately NO backup credentials here. The instance is
+# attached to the bucket with Lightsail resource access (terraform/storage.tf),
+# which is the Lightsail equivalent of an instance profile — the AWS CLI gets
+# short-lived credentials from instance metadata and there is no key to store,
+# rotate, or leak. See G5.
+
+# Ubuntu Pro subscription token — harden.yml only, unused by site.yml.
+# Free for personal use: https://ubuntu.com/pro/dashboard
+vault_ubuntu_pro_token: ""

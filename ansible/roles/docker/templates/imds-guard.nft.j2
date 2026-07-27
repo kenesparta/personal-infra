@@ -1,0 +1,53 @@
+#!/usr/sbin/nft -f
+#
+# Managed by Ansible (personal-infra, role: docker) — edits will be reverted.
+# Loaded by imds-guard.service. Syntax-checked with `nft -c -f` before install.
+#
+# G16 — blocks CONTAINERS from reading instance metadata, while leaving the host
+# alone. The backup carries no access key: the instance is attached to the
+# bucket with Lightsail resource access, so the AWS CLI takes short-lived
+# credentials from 169.254.169.254 (G5). Link-local traffic from a container is
+# routed out through the host, so without this every container on a Docker
+# bridge can ask for those credentials and get full read/write on the backup
+# bucket — including other projects' database dumps, which is exactly what
+# REVOKE CONNECT (G15) stops them reading out of Postgres.
+#
+# Why a table of our own rather than a rule in Docker's DOCKER-USER chain:
+#
+#   * Docker rebuilds its chains on every daemon start. A rule placed in
+#     DOCKER-USER has to be re-applied afterwards; this table is untouched by
+#     `iptables -F` (verified), so it simply survives.
+#   * Because it does not depend on Docker having started, the guard can be
+#     ordered BEFORE docker.service — closing the window where containers are
+#     running but the rule is not yet in place.
+#   * It does not depend on the DOCKER-USER chain existing at all, so it keeps
+#     working if Docker's native nftables firewall backend is ever enabled.
+#
+# The hook is `forward`: container -> metadata is routed THROUGH the host, so it
+# traverses forward, whereas the host's own traffic uses output and is untouched
+# — which is why pg-backup.sh keeps its credentials. Priority `filter - 10` puts
+# this ahead of the iptables-nft compatibility chains, though it would win
+# regardless: in nftables a `drop` is final across every table at a hook, while
+# an `accept` in one table does not stop the others being evaluated (verified —
+# this DROP overrides an explicit iptables ACCEPT).
+#
+# CAVEAT: this covers bridge-networked containers, which is all of them by
+# design. A container run with `network_mode: host` shares the host's stack, so
+# its traffic is `output` and this guard does not apply to it. Do not add one.
+#
+# The declare-then-delete pair is the idempotent-reload idiom: it makes `delete`
+# succeed whether or not the table is already present, so loading this file
+# repeatedly always leaves exactly one chain with one rule.
+table inet {{ imds_guard_table }}
+delete table inet {{ imds_guard_table }}
+
+table inet {{ imds_guard_table }} {
+	chain container_metadata_guard {
+		type filter hook forward priority filter - 10; policy accept;
+
+		# `counter` is deliberate: a non-zero count is evidence that something
+		# in a container went looking for credentials, which is worth knowing.
+		#   nft list table inet {{ imds_guard_table }}
+		ip daddr 169.254.169.254 counter drop comment "G16: containers must not read instance metadata"
+	}
+}

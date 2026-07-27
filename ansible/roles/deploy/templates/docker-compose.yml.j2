@@ -1,0 +1,32 @@
+# Managed by Ansible (personal-infra, role: deploy) — edits will be reverted.
+# Project: {{ item.name }} (from projects.yml)
+name: {{ item.name }}
+
+services:
+  {{ item.name }}:
+    # AD-10 — GHCR, not ECR. A Lightsail instance cannot assume an IAM role
+    # (G5), so ECR would mean an access key on disk plus a second timer
+    # refreshing the 12-hour token. The tag is deliberately a MOVING one: the
+    # timer's `docker compose pull` is what makes a release go live, so pinning
+    # a digest here would stop deploys entirely.
+    image: {{ item.image }}:{{ item.tag | default('latest') }}
+    container_name: {{ item.name }}
+    restart: unless-stopped
+
+    # No `ports:` (acceptance criterion 9). Caddy reaches this over `web` as
+    # {{ item.name }}:{{ item.port }}, and nothing else can reach it at all.
+    networks:
+      - {{ docker_network }}
+
+    env_file:
+      - .env
+
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+networks:
+  {{ docker_network }}:
+    external: true

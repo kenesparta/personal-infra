@@ -1,0 +1,74 @@
+---
+# Base packages, unattended security updates, timezone, fail2ban (spec §9.2).
+# Runs first and depends on nothing.
+
+- name: Refresh the apt cache
+  ansible.builtin.apt:
+    update_cache: true
+    # Without this every run reports changed and A1 can never be satisfied.
+    cache_valid_time: 3600
+
+- name: Install base packages
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - gnupg
+      - unattended-upgrades
+      - fail2ban
+      # The backup script uploads to the Lightsail bucket with it (G5 — the
+      # instance cannot assume a role, so this authenticates with a key on disk).
+      - awscli
+    state: present
+
+- name: Read the current timezone
+  # ansible.builtin has no timezone module (it lives in community.general) and
+  # one collection dependency is enough, so this is command + a read-first
+  # guard rather than an unconditional set (A6).
+  ansible.builtin.command: timedatectl show --property=Timezone --value
+  register: common_current_tz
+  changed_when: false
+
+- name: Set the timezone
+  ansible.builtin.command: timedatectl set-timezone {{ timezone }}
+  when: common_current_tz.stdout != timezone
+  changed_when: true
+
+- name: Enable unattended security upgrades
+  ansible.builtin.template:
+    src: 20auto-upgrades.j2
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Configure what unattended-upgrades may touch
+  ansible.builtin.template:
+    src: 52personal-infra.j2
+    dest: /etc/apt/apt.conf.d/52personal-infra
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Configure fail2ban
+  ansible.builtin.template:
+    src: jail.local.j2
+    dest: /etc/fail2ban/jail.local
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart fail2ban
+
+- name: Enable fail2ban
+  ansible.builtin.systemd_service:
+    name: fail2ban
+    enabled: true
+    state: started
+
+- name: Create the layout
+  ansible.builtin.file:
+    path: "{{ infra_root }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"

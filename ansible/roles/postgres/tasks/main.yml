@@ -1,0 +1,148 @@
+---
+# One Postgres instance for the whole host, as a container on `web` (AD-3).
+# It publishes NO port: applications reach it as `postgres:5432` by Docker DNS,
+# and the host shows nothing on 5432 at all (acceptance criterion 8).
+
+- name: Create the Postgres stack directory
+  ansible.builtin.file:
+    path: "{{ infra_root }}/postgres"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Write the Postgres environment file
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ infra_root }}/postgres/.env"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+- name: Write the Postgres Compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ infra_root }}/postgres/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Start Postgres
+  # No handler: Compose IS the convergence step. It compares the running
+  # container against the file and recreates only on a real difference, so this
+  # reports changed exactly when something changed (A1, A3).
+  community.docker.docker_compose_v2:
+    project_src: "{{ infra_root }}/postgres"
+    state: present
+    # Pinned tags, so `missing` means "pull once". Never `always`: an unplanned
+    # minor bump on a database is not something a configure run should do.
+    pull: missing
+
+- name: Wait for Postgres to accept connections
+  ansible.builtin.command: docker exec {{ postgres_container }} pg_isready -U postgres -q
+  register: postgres_ready
+  until: postgres_ready.rc == 0
+  retries: 30
+  delay: 2
+  changed_when: false
+
+# ── Per-project roles and databases ──────────────────────────────────────────
+# psql is reached through `docker exec`, which the image's generated pg_hba
+# leaves on `trust` for the in-container unix socket while every TCP connection
+# needs scram-sha-256 (spec §9.5). Getting to that socket already requires root
+# on the host.
+#
+# Anything carrying a password goes over STDIN rather than argv, so it never
+# appears in the host's process list.
+
+- name: Find which Postgres roles already exist
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ postgres_container }}"
+      - psql
+      - -U
+      - postgres
+      - -tAc
+      - SELECT 1 FROM pg_roles WHERE rolname = '{{ item.name }}'
+  loop: "{{ projects }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: postgres_existing_roles
+  changed_when: false
+
+- name: Create the per-project roles
+  ansible.builtin.command:
+    cmd: docker exec -i {{ postgres_container }} psql -U postgres -v ON_ERROR_STOP=1 -f -
+    stdin: |
+      CREATE ROLE {{ item.item.name }} LOGIN PASSWORD '{{ vault_postgres_passwords[item.item.name] | replace("'", "''") }}';
+  loop: "{{ postgres_existing_roles.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: item.stdout | trim != "1"
+  changed_when: true
+  no_log: true
+
+- name: Find which databases already exist
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - "{{ postgres_container }}"
+      - psql
+      - -U
+      - postgres
+      - -tAc
+      - SELECT 1 FROM pg_database WHERE datname = '{{ item.database }}'
+  loop: "{{ projects }}"
+  loop_control:
+    label: "{{ item.database }}"
+  register: postgres_existing_dbs
+  changed_when: false
+
+- name: Create the per-project databases
+  # CREATE DATABASE cannot run inside a transaction block, so it is sent on its
+  # own. The REVOKE follows separately, below.
+  ansible.builtin.command:
+    cmd: docker exec -i {{ postgres_container }} psql -U postgres -v ON_ERROR_STOP=1 -f -
+    stdin: |
+      CREATE DATABASE {{ item.item.database }} OWNER {{ item.item.name }};
+  loop: "{{ postgres_existing_dbs.results }}"
+  loop_control:
+    label: "{{ item.item.database }}"
+  when: item.stdout | trim != "1"
+  changed_when: true
+
+- name: Restrict each database to its owner
+  # G15 — `web` is flat, so every container can reach Postgres and try to
+  # authenticate. Postgres grants CONNECT to PUBLIC by default, which would let
+  # any project's credentials open any other project's database. This is what
+  # actually separates them.
+  ansible.builtin.command:
+    cmd: docker exec -i {{ postgres_container }} psql -U postgres -v ON_ERROR_STOP=1 -f -
+    stdin: |
+      REVOKE CONNECT ON DATABASE {{ item.item.database }} FROM PUBLIC;
+      GRANT CONNECT ON DATABASE {{ item.item.database }} TO {{ item.item.name }};
+  loop: "{{ postgres_existing_dbs.results }}"
+  loop_control:
+    label: "{{ item.item.database }}"
+  when: item.stdout | trim != "1"
+  changed_when: true
+
+- name: Rotate the per-project passwords
+  # Deliberately opt-in: run with `-e postgres_rotate_passwords=true` after
+  # changing vault.yml. Doing it unconditionally would report `changed` on every
+  # run and break A1, and it is a two-sided change anyway — the project's
+  # DATABASE_URL is rewritten by the `deploy` role in the same run.
+  ansible.builtin.command:
+    cmd: docker exec -i {{ postgres_container }} psql -U postgres -v ON_ERROR_STOP=1 -f -
+    stdin: |
+      ALTER ROLE {{ item.name }} WITH PASSWORD '{{ vault_postgres_passwords[item.name] | replace("'", "''") }}';
+  loop: "{{ projects }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: postgres_rotate_passwords | default(false) | bool
+  changed_when: true
+  no_log: true

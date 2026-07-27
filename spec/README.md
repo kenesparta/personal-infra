@@ -35,6 +35,6 @@ Terraform and Ansible comments cite these rather than section numbers, so they s
 |------------|----------------------|-----------------------------------------|
 | `C<n>`     | Constraint           | [§2](02-constraints.md)                 |
 | `AD-<n>`   | Architecture decision| [§3](03-decisions.md)                   |
-| `A<n>`     | Ansible convention   | [§9.4](09-ansible.md#94-conventions)    |
+| `A<n>`     | Ansible convention   | [§9.6](09-ansible.md#96-conventions)    |
 | `G<n>`     | Gotcha               | [§12](12-gotchas.md)                    |
 | `Phase <n>`| Migration phase      | [§10](10-phases.md)                     |

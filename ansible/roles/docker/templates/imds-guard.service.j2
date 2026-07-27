@@ -1,0 +1,36 @@
+# Managed by Ansible (personal-infra, role: docker) — edits will be reverted.
+# Loads /etc/nftables.d/imds-guard.nft at boot. See G16 and the rule file itself.
+
+[Unit]
+Description=Block container access to the instance metadata service (G16)
+Documentation=https://github.com/kenesparta/personal-infra
+
+# BEFORE docker, not after. The guard lives in its own nftables table and needs
+# nothing from Docker, so it can be in place before the first container starts —
+# unlike a DOCKER-USER rule, which cannot exist until dockerd has built its
+# chains and therefore always leaves a window at boot.
+#
+# Deliberately NOT a hard dependency of docker.service. Making the container
+# runtime refuse to start without this would turn a typo in a firewall rule into
+# a total outage, and the guard is defence in depth: it only matters once a
+# container is already compromised. Ansible syntax-checks the rule file with
+# `nft -c -f` before installing it, which is where that class of error gets
+# caught.
+Before=docker.service
+After=network-pre.target
+Wants=network-pre.target
+
+# Nothing here touches Ubuntu's nftables.service, and it must stay that way:
+# the stock /etc/nftables.conf begins with `flush ruleset`, which would delete
+# every rule Docker has installed and break container networking until the
+# daemon is restarted.
+ConditionPathExists=/etc/nftables.d/imds-guard.nft
+
+[Service]
+Type=oneshot
+RemainAfterExit=true
+ExecStart=/usr/sbin/nft -f /etc/nftables.d/imds-guard.nft
+ExecStop=/usr/sbin/nft destroy table inet {{ imds_guard_table }}
+
+[Install]
+WantedBy=multi-user.target

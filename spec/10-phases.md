@@ -31,9 +31,10 @@ Each phase ends with a verifiable outcome and is independently revertible. The s
 
 ## Phase 4 — Data migration
 
-- [ ] `pg_dump` the Lightsail managed database
-- [ ] Restore into the host Postgres, `blog` database
-- [ ] Point the container's `DATABASE_URL` at `127.0.0.1`
+- [ ] `pg_dump -Fc` the Lightsail managed database `personal-projects` (PostgreSQL **18.4** — see G14)
+- [ ] Restore into the host Postgres container, `blog` database
+- [ ] Confirm the container's `DATABASE_URL` resolves `postgres:5432` on the `web` network (AD-3; **not** `127.0.0.1`,
+      which inside a bridge-networked container is its own namespace)
 - **Verify:** row counts match; the app renders posts from the host database
 
 ## Phase 5 — Registry cutover

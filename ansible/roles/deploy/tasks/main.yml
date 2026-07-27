@@ -1,0 +1,90 @@
+---
+# A5 — this role does NOT deploy applications. It installs the timer that pulls
+# them (AD-5). After this runs, releases reach the host without Ansible, without
+# inbound connectivity, and without anything pushing to the box.
+
+- name: Create the projects directory
+  ansible.builtin.file:
+    path: "{{ infra_root }}/projects"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Create each project's directory
+  ansible.builtin.file:
+    path: "{{ infra_root }}/projects/{{ item.name }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: "{{ projects }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Write each project's environment file
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ infra_root }}/projects/{{ item.name }}/.env"
+    owner: root
+    group: root
+    mode: "0600"
+  loop: "{{ projects }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+
+- name: Write each project's Compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ infra_root }}/projects/{{ item.name }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ projects }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Install the deploy unit
+  # A systemd TEMPLATE unit, instantiated once per project as
+  # personal-infra-deploy@<name>. One file to maintain regardless of how many
+  # projects projects.yml grows to.
+  ansible.builtin.template:
+    src: personal-infra-deploy@.service.j2
+    dest: /etc/systemd/system/personal-infra-deploy@.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Install the deploy timer
+  ansible.builtin.template:
+    src: personal-infra-deploy@.timer.j2
+    dest: /etc/systemd/system/personal-infra-deploy@.timer
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Reload systemd before enabling anything that depends on the new units
+  ansible.builtin.meta: flush_handlers
+
+- name: Start each project
+  # First start only. From here the timer owns the container: it pulls a new
+  # image and recreates on its own schedule, and Ansible is not involved (A5).
+  community.docker.docker_compose_v2:
+    project_src: "{{ infra_root }}/projects/{{ item.name }}"
+    state: present
+    pull: missing
+  loop: "{{ projects }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Enable each project's deploy timer
+  ansible.builtin.systemd_service:
+    name: personal-infra-deploy@{{ item.name }}.timer
+    enabled: true
+    state: started
+  loop: "{{ projects }}"
+  loop_control:
+    label: "{{ item.name }}"

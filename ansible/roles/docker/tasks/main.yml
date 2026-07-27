@@ -1,0 +1,166 @@
+---
+# Docker Engine + Compose plugin from DOCKER'S apt repo, not the distro
+# docker.io package (spec §9.2): docker.io lags badly and does not ship the
+# Compose v2 plugin at all, which every stack here depends on.
+
+- name: Create the apt keyring directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install Docker's apt signing key
+  ansible.builtin.get_url:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    dest: /etc/apt/keyrings/docker.asc
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Add Docker's apt repository
+  # deb822 format, not the one-line `deb [...]` form: apt_repository is
+  # deprecated and scheduled for removal in ansible-core 2.25.
+  ansible.builtin.deb822_repository:
+    name: docker
+    types: deb
+    uris: https://download.docker.com/linux/ubuntu
+    suites: "{{ ansible_facts.distribution_release }}"
+    components: stable
+    architectures: "{{ 'arm64' if ansible_facts.architecture == 'aarch64' else 'amd64' }}"
+    signed_by: /etc/apt/keyrings/docker.asc
+    enabled: true
+    state: present
+  register: docker_repo
+
+- name: Install Docker Engine and the Compose plugin
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state: present
+    update_cache: "{{ docker_repo.changed }}"
+
+- name: Configure the Docker daemon
+  ansible.builtin.template:
+    src: daemon.json.j2
+    dest: /etc/docker/daemon.json
+    owner: root
+    group: root
+    mode: "0644"
+    validate: dockerd --validate --config-file %s
+  notify: Restart docker
+
+- name: Enable Docker
+  ansible.builtin.systemd_service:
+    name: docker
+    enabled: true
+    state: started
+
+# Handlers normally run at the end of the play, but the very next task needs a
+# daemon that has already picked up daemon.json, and so does every stack after
+# it. Flushing here keeps the restart in one place (A3) without deferring it.
+- name: Apply any pending daemon restart before using Docker
+  ansible.builtin.meta: flush_handlers
+
+- name: Allow the login user to use Docker without sudo
+  # Membership in `docker` is root-equivalent — but `ubuntu` already has
+  # passwordless sudo on a Lightsail image, so this grants nothing new.
+  ansible.builtin.user:
+    name: ubuntu
+    groups: docker
+    append: true
+
+- name: Check whether the shared network exists
+  # community.docker.docker_network would be tidier but is SDK-backed, which
+  # means installing python3-docker on the host for one task. A read-then-create
+  # pair over the CLI is honest about `changed` and costs nothing (A6).
+  ansible.builtin.command: docker network inspect {{ docker_network }}
+  register: docker_net
+  changed_when: false
+  failed_when: false
+
+- name: Create the shared network
+  # Every stack — Postgres, Caddy, and each project — attaches to this as an
+  # external network. It is what makes `reverse_proxy blog:3000` (spec §9.3)
+  # and `postgres:5432` (AD-3) resolve.
+  ansible.builtin.command: docker network create {{ docker_network }}
+  when: docker_net.rc != 0
+  changed_when: true
+
+# ── Metadata guard (G16) ─────────────────────────────────────────────────────
+# The backup path carries no access key; the AWS CLI reads short-lived
+# credentials from instance metadata (G5). Metadata is reachable from any
+# bridge-networked container, so this closes it before containers can run.
+
+- name: Install nftables
+  # Ubuntu 24.04's iptables is already the nf_tables backend, but the `nft` CLI
+  # itself comes from this package and is not installed by default.
+  ansible.builtin.apt:
+    name: nftables
+    state: present
+
+- name: Create the nftables rule directory
+  ansible.builtin.file:
+    path: /etc/nftables.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the metadata guard ruleset
+  ansible.builtin.template:
+    src: imds-guard.nft.j2
+    dest: /etc/nftables.d/imds-guard.nft
+    owner: root
+    group: root
+    mode: "0644"
+    # Parses the candidate file without applying it, so a malformed rule is
+    # caught here rather than at the next boot. This is why the unit does not
+    # need to be a hard dependency of docker.service.
+    validate: nft --check --file %s
+  notify: Reload the metadata guard
+
+- name: Install the metadata guard unit
+  ansible.builtin.template:
+    src: imds-guard.service.j2
+    dest: /etc/systemd/system/imds-guard.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd for the metadata guard
+
+- name: Apply any pending guard change before enabling it
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable the metadata guard
+  ansible.builtin.systemd_service:
+    name: imds-guard.service
+    enabled: true
+    state: started
+
+- name: Verify containers cannot reach instance metadata
+  # Checks the outcome, not the mechanism: a non-zero exit means the table is
+  # absent and containers can read the bucket credentials.
+  ansible.builtin.command: nft list table inet {{ imds_guard_table }}
+  changed_when: false
+
+- name: Authenticate to GHCR
+  # AD-10: the image registry is GHCR, not ECR, because a Lightsail instance
+  # cannot assume an IAM role (G5) and an ECR token would need a second timer
+  # refreshing it every 12 hours. This PAT needs read:packages only.
+  #
+  # `docker login` is idempotent in effect — it rewrites an identical
+  # config.json — so changed_when is false. It runs every time on purpose: it
+  # is also the only check that the PAT has not expired or been revoked, and
+  # finding that out here beats finding out when a deploy silently stops
+  # updating.
+  ansible.builtin.command:
+    cmd: docker login ghcr.io --username {{ vault_ghcr_username }} --password-stdin
+    stdin: "{{ vault_ghcr_token }}"
+  changed_when: false
+  no_log: true

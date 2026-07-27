@@ -1,0 +1,65 @@
+---
+# CIS Level 1 (server) via Ubuntu Security Guide. REACHED ONLY FROM harden.yml,
+# never from site.yml (A4) — `usg fix` rewrites sshd configuration, file
+# permissions and kernel parameters, and can lock you out of a host whose only
+# door is SSH.
+
+- name: Check the Ubuntu Pro attachment status
+  ansible.builtin.command: pro status --format json
+  register: hardening_pro_status
+  changed_when: false
+
+- name: Attach the Ubuntu Pro subscription
+  # usg is a Pro entitlement; without an attachment nothing below can run. Free
+  # for personal use, up to five machines.
+  ansible.builtin.command: pro attach {{ vault_ubuntu_pro_token }}
+  when: not (hardening_pro_status.stdout | from_json).attached
+  changed_when: true
+  no_log: true
+
+- name: Enable the usg entitlement
+  ansible.builtin.command: pro enable usg --assume-yes
+  args:
+    creates: /usr/sbin/usg
+
+- name: Create the marker directory
+  ansible.builtin.file:
+    path: /var/lib/personal-infra
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Apply the CIS Level 1 server profile
+  # `creates:` is what makes this idempotent (A6). Without the marker, `usg fix`
+  # re-runs on every play — it is slow, it restarts sshd, and re-applying it
+  # over a config Ansible has since changed is how a hardened host quietly
+  # diverges from what site.yml believes it configured.
+  ansible.builtin.command: usg fix cis_level1_server
+  args:
+    creates: /var/lib/personal-infra/usg-cis-level1-applied
+  register: hardening_usg
+
+- name: Record that the profile was applied
+  ansible.builtin.copy:
+    # Deliberately not a plain touch: knowing WHICH profile was applied is what
+    # you need a year later, when the question is whether re-running is safe.
+    content: |
+      profile: cis_level1_server
+      applied_by: ansible (personal-infra, role: hardening)
+      Remove this file to force `usg fix` to run again.
+    dest: /var/lib/personal-infra/usg-cis-level1-applied
+    owner: root
+    group: root
+    mode: "0644"
+  when: hardening_usg is changed
+
+- name: Confirm SSH is still listening
+  # Cheap sanity check from inside the play. It cannot prove that a NEW session
+  # would authenticate — this one is already open, and the existing connection
+  # survives an sshd restart — which is exactly why A4 requires verifying from a
+  # second terminal before closing the first.
+  ansible.builtin.wait_for:
+    port: 22
+    host: 127.0.0.1
+    timeout: 30

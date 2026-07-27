@@ -94,3 +94,35 @@ resource "aws_route53_record" "origin" {
   records  = [aws_lightsail_static_ip.app.ip_address]
 }
 ```
+
+## 5.7 Backup bucket
+
+A Lightsail bucket on the `small_1_0` bundle — 5 GB, $1/mo, matching [§14](14-cost.md). Versioning is enabled so an
+overwritten dump is still recoverable.
+
+```hcl
+resource "aws_lightsail_bucket" "backups" {
+  name      = var.backup_bucket_name   # globally unique
+  bundle_id = "small_1_0"
+}
+```
+
+**There is no access key anywhere.** Lightsail buckets support *resource access* — the service's equivalent of an EC2
+instance profile — so the host is attached to the bucket and the AWS CLI resolves short-lived credentials from instance
+metadata (G5):
+
+```hcl
+resource "aws_lightsail_bucket_resource_access" "backups_host" {
+  bucket_name   = aws_lightsail_bucket.backups.name
+  resource_name = aws_lightsail_instance.app.name
+}
+```
+
+Nothing to store in Vault, nothing to rotate, and revocation is detaching the instance. `aws_lightsail_bucket_access_key`
+is deliberately unused: its `secret_access_key` is a plain `computed` attribute and would sit in state in cleartext.
+
+Constraints: instance and bucket must share a Region, the instance must be running or stopped, and the grant is
+whole-bucket read/write with no way to narrow it to a prefix. **It also requires the metadata guard in the `docker`
+role — see G16**, without which every container can read the same credentials.
+
+Lightsail buckets have no lifecycle rules, so retention is the backup script's job — see [§9.2](09-ansible.md).

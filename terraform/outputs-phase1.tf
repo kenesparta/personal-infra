@@ -18,6 +18,11 @@ output "ssh_command" {
   description = "Convenience. Assumes the private key sits beside the .pub referenced by ssh_public_key_path."
 }
 
+output "backup_bucket" {
+  value       = aws_lightsail_bucket.backups.name
+  description = "pg_dump destination. Set as backup_bucket in ansible/group_vars/all.yml — Ansible does not read Terraform state."
+}
+
 output "cdn_domain" {
   value       = aws_cloudfront_distribution.cdn_distribution.domain_name
   description = "cdn.kenesparta.dev distribution. Unchanged by the migration, but not previously exported."

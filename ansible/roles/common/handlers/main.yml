@@ -1,0 +1,7 @@
+---
+# A3 — config changes notify handlers; roles never restart unconditionally.
+
+- name: Restart fail2ban
+  ansible.builtin.systemd_service:
+    name: fail2ban
+    state: restarted

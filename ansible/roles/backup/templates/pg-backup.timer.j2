@@ -1,0 +1,17 @@
+# Managed by Ansible (personal-infra, role: backup) — edits will be reverted.
+
+[Unit]
+Description=Daily database backup
+
+[Timer]
+# {{ backup_schedule }} UTC — deliberately before the 06:00 Lightsail auto-snapshot, so a
+# morning snapshot always contains a fresh dump as well as the live data.
+OnCalendar=*-*-* {{ backup_schedule }}
+RandomizedDelaySec=600
+
+# A host that was off at 03:00 backs up when it comes back, rather than
+# skipping a day in silence.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

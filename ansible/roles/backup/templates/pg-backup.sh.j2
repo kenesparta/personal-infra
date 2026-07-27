@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+#
+# Managed by Ansible (personal-infra, role: backup) — edits will be reverted.
+# Run by pg-backup.service, daily at {{ backup_schedule }} UTC.
+#
+# Dumps every database named in projects.yml and uploads each to the Lightsail
+# bucket under a TIMESTAMPED key, so a run never overwrites its predecessor.
+# That is what stands in for bucket versioning, which aws_lightsail_bucket does
+# not expose (see terraform/storage.tf).
+
+set -euo pipefail
+
+CONTAINER='{{ postgres_container }}'
+LOCAL_DIR='{{ backup_local_dir }}'
+BUCKET='{{ backup_bucket }}'
+RETENTION_DAYS='{{ backup_local_retention_days }}'
+
+# Built as a whole command rather than an array of extra flags, so it is never
+# empty. Expanding an EMPTY array under `set -u` is an unbound-variable error in
+# bash before 4.4 — Ubuntu 24.04 ships 5.2 and would be fine, but a backup
+# script is the wrong place to depend on that.
+{% if backup_endpoint_url %}
+AWS_S3=(aws s3 --endpoint-url '{{ backup_endpoint_url }}')
+{% else %}
+AWS_S3=(aws s3)
+{% endif %}
+
+DATABASES=(
+{% for p in projects %}
+  '{{ p.database }}'
+{% endfor %}
+)
+
+timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+failures=0
+
+for db in "${DATABASES[@]}"; do
+  target="${LOCAL_DIR}/${db}-${timestamp}.dump"
+
+  # Written to .part first and renamed only on success, so a dump interrupted
+  # halfway can never be mistaken for a good one by the upload below or by a
+  # human reaching for the newest file in a hurry.
+  #
+  # --format=custom because pg_restore can filter, reorder and parallelise it,
+  # and it is compressed. Ownership is deliberately preserved: this restores
+  # into the same cluster with the same roles. Add --no-owner by hand for a
+  # scratch restore into a throwaway database (Phase 9).
+  if ! docker exec "${CONTAINER}" pg_dump -U postgres --format=custom "${db}" > "${target}.part"; then
+    echo "pg_dump failed for ${db}" >&2
+    rm -f "${target}.part"
+    failures=$((failures + 1))
+    continue
+  fi
+
+  # An unreadable archive is the failure mode that silently survives for months
+  # and is discovered during an actual restore. Reading the table of contents
+  # back proves the file is a coherent pg_dump archive, not merely non-empty.
+  if ! docker exec -i "${CONTAINER}" pg_restore --list > /dev/null < "${target}.part"; then
+    echo "dump for ${db} is not a readable archive — discarding" >&2
+    rm -f "${target}.part"
+    failures=$((failures + 1))
+    continue
+  fi
+
+  mv "${target}.part" "${target}"
+
+  if ! "${AWS_S3[@]}" cp "${target}" "s3://${BUCKET}/postgres/${db}/${db}-${timestamp}.dump"; then
+    echo "upload failed for ${db} — the local copy in ${LOCAL_DIR} is kept" >&2
+    failures=$((failures + 1))
+    continue
+  fi
+
+  echo "backed up ${db} -> s3://${BUCKET}/postgres/${db}/${db}-${timestamp}.dump"
+done
+
+# LOCAL copies only. Nothing prunes the bucket: Lightsail buckets have no
+# lifecycle rules, and a script that deletes backups on a schedule is a worse
+# risk than paying for a few megabytes of old dumps against a 5 GB bundle.
+# Deleting remote objects stays a deliberate, manual act.
+find "${LOCAL_DIR}" -maxdepth 1 -type f -name '*.dump' -mtime "+${RETENTION_DAYS}" -delete
+find "${LOCAL_DIR}" -maxdepth 1 -type f -name '*.part' -mtime +1 -delete
+
+if [ "${failures}" -gt 0 ]; then
+  echo "${failures} database(s) failed to back up" >&2
+  exit 1
+fi

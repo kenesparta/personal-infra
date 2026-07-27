@@ -4,8 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-The repository is **pre-Phase 1**: `spec/`, `terraform/`, `projects.yml`, and the `Makefile` exist, `ansible/` does not
-yet, and `main` has no commits. Everything below describes what is to be built.
+**All code through Phase 3 is written; nothing has been applied.** `spec/`, `terraform/` (including `storage.tf`),
+`ansible/` (all seven roles), `projects.yml` and the `Makefile` exist. What has *not* happened: the Phase 0 state copy
+(`s3://tf.kenesparta.dev/infra/prod/terraform.tfstate` does not exist yet — only the old `dns/prod/kenesparta.dev`
+key), and any `terraform apply` (no Lightsail instance, static IP or bucket exists). Phases 4–9 are unwritten by
+design; they are migration procedure, not code.
 
 This is not a greenfield project. It is a **migration** that absorbs a working estate from a second repository,
 `../kenesparta.dev` (added to the session with `/add-dir`). Read `spec/` before touching anything — it is rev 2 and
@@ -31,6 +34,12 @@ in `../kenesparta.dev/tf` with state at `s3://tf.kenesparta.dev/dns/prod/kenespa
 
 The target is a Lightsail **instance** (Ubuntu 24.04, `small_3_0` — 2 GB / 2 vCPU / 60 GB, $12/mo) running Docker
 Compose + Caddy + self-hosted Postgres, configured by Ansible, with images pulled from GHCR by a systemd timer.
+
+The managed source database is **PostgreSQL 18.4**, so the self-hosted one is pinned to `postgres:18` — `pg_restore`
+only moves forward across majors (G14). It runs as a **container on the `web` network**, not as an apt package: an
+application container's `127.0.0.1` is its own namespace, so a host Postgres bound to loopback would be unreachable
+from the very things that need it. Applications reach it as `postgres:5432`, and nothing listens on 5432 on the host
+(AD-3, amended in rev 2.1).
 
 **RAM is the binding constraint at this bundle** (AD-1), which is why C3 caps at **four services**: ~350 MB OS+Docker,
 ~400 MB tuned Postgres, ~50 MB Caddy, ~100 MB per service — about 1.2 GB of 2 GB at the ceiling. Postgres must be tuned
@@ -69,12 +78,16 @@ The Terraform→Ansible handoff is a generated `ansible/inventory/hosts.ini` wri
 
 ## Commands
 
-Terraform work happens in `terraform/`, Ansible in `ansible/`; a root `Makefile` ties the stages together:
+Terraform work happens in `terraform/`, Ansible in `ansible/`; a root `Makefile` ties the stages together. `make help`
+lists everything, grouped.
 
 ```bash
+make deps          # install community.docker (the only collection dependency)
+make vault/create  # ansible/group_vars/vault.yml from the committed template
 make inventory     # regenerate ansible/inventory/hosts.ini from terraform output
 make configure     # ansible-playbook site.yml   (all host config except hardening)
 make harden        # ansible-playbook harden.yml (deliberate, never part of site.yml)
+make syntax        # parse both playbooks without touching the host
 ```
 
 AWS access is SSO and expires. Before any apply, log in from the *application* repo, which holds the profile name:
@@ -117,9 +130,26 @@ Failure modes that are not obvious from any single file (`spec/12-gotchas.md`):
   handlers; never restart unconditionally.
 - **Hardening is a separate playbook.** `usg fix cis_level1_server` can lock you out. Snapshot, run `harden.yml`, verify
   SSH from a *second* terminal before closing the first, then re-run `site.yml`. Guard `usg fix` with `creates:`.
-- **Secrets:** Postgres passwords, the GHCR PAT, and the origin secret live in `ansible/group_vars/vault.yml`
-  (ansible-vault). The application repo separately uses **sops + age** for `secrets/prod.enc.env` — two different
-  mechanisms, do not conflate them.
+- **Secrets:** Postgres passwords, the GHCR PAT and the origin secret live in `ansible/group_vars/vault.yml`
+  (ansible-vault); `vault.yml.example` is the committed, key-names-only template. This repo *also* uses **sops + age**
+  for `secrets/prod.enc.env`, read by Terraform — two different mechanisms, do not conflate them.
+- **There is no AWS credential on the host.** G5's old claim that *any* AWS access needs a key on disk was wrong for
+  Lightsail buckets: `aws_lightsail_bucket_resource_access` attaches the instance to the backup bucket and the AWS CLI
+  takes short-lived credentials from instance metadata. It does **not** generalise to other services, so AD-10 (GHCR
+  over ECR) still stands — there is no such attachment for ECR.
+- **Never remove `imds-guard.service`** while resource access is in place (G16). Metadata is reachable from any
+  container on a Docker bridge, so that one nftables DROP is the only thing stopping an application container from
+  reading every project's database dumps out of the backup bucket. It is a **native nftables table of its own**
+  (`personal_infra_guard`), deliberately not a rule in Docker's `DOCKER-USER` chain: Docker rebuilds its chains on every
+  daemon start and cannot touch a separate table, and an independent table can be ordered *before* `docker.service`.
+  Consequences: `iptables -S` will not show it (use `nft list table inet personal_infra_guard`), and Ubuntu's
+  `nftables.service` must stay disabled because its stock config begins with `flush ruleset`.
+- **The Phase 0 gate must be told about every additive `.tf` file.** `make plan/phase0` moves `main.tf`,
+  `outputs-phase1.tf` and `storage.tf` aside so the gate answers only "did the state copy land correctly?". Add a new
+  additive file without adding it there and the gate goes red for a resource that is *supposed* to be new — which looks
+  exactly like the failure it exists to catch.
+- **The backup bucket's access key is created out of band, on purpose.** `aws_lightsail_bucket_access_key` would write
+  the secret half into Terraform state in plaintext (G5). Same reasoning as AD-10's GHCR PAT.
 
 ## Conventions
 
@@ -127,9 +157,9 @@ Failure modes that are not obvious from any single file (`spec/12-gotchas.md`):
   because `user_data` requires one. `command`/`shell` need `creates:`, `removes:`, or `changed_when:`.
 - Flat structure within each stage — no Terraform modules, no Ansible roles beyond the seven in `spec/09-ansible.md`,
   until a second environment exists.
-- `terraform/terraform.tfvars` and `ansible/inventory/hosts.ini` must be gitignored — `.gitignore` currently contains
-  only `.idea`, so both entries still need adding. `terraform.tfvars.example` is committed and must contain no real
-  values.
+- `terraform/terraform.tfvars` and `ansible/inventory/hosts.ini` are gitignored; `terraform.tfvars.example` and
+  `group_vars/vault.yml.example` are committed and must contain no real values. `group_vars/vault.yml` **is** committed,
+  but only ever ansible-vault encrypted — `make vault/check` verifies that before you push.
 - Terraform ≥ 1.10 (S3 backend `use_lockfile`, no DynamoDB table); the application repo pins 1.15.8 in CI, so match it.
 - Docker comes from Docker's apt repo, not the distro `docker.io` package. Postgres binds `127.0.0.1` only, and no
   container publishes host ports except Caddy.

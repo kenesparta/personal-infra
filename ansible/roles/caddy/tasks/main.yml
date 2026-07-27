@@ -1,0 +1,54 @@
+---
+# The only container that publishes ports to the host (acceptance criterion 9).
+# Terminates Let's Encrypt on the origin-* names and rejects anything that did
+# not come through CloudFront (AD-8, spec §9.3).
+
+- name: Create the Caddy stack directory
+  ansible.builtin.file:
+    path: "{{ infra_root }}/caddy"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Write the Caddy environment file
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ infra_root }}/caddy/.env"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+- name: Write the Caddyfile
+  ansible.builtin.template:
+    src: Caddyfile.j2
+    dest: "{{ infra_root }}/caddy/Caddyfile"
+    owner: root
+    group: root
+    mode: "0644"
+  register: caddy_config
+
+- name: Write the Caddy Compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ infra_root }}/caddy/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Start Caddy
+  community.docker.docker_compose_v2:
+    project_src: "{{ infra_root }}/caddy"
+    state: present
+    pull: missing
+
+- name: Reload the Caddy configuration
+  # A Caddyfile change alone does not change the container, so Compose sees
+  # nothing to do — the file is a bind mount. Reload in place instead of
+  # restarting (A3): `caddy reload` re-reads the config with no dropped
+  # connections and, importantly, without re-running ACME.
+  ansible.builtin.command:
+    cmd: docker exec {{ caddy_container }} caddy reload --config /etc/caddy/Caddyfile
+  when: caddy_config.changed
+  changed_when: true

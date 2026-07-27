@@ -1,0 +1,77 @@
+# Non-secret host configuration. Secrets live in vault.yml (A2) — nothing in
+# this file may be one. `projects` is NOT defined here: it comes from the
+# repository-root projects.yml, loaded by site.yml's vars_files (spec §5.3), so
+# that Terraform and Ansible cannot drift apart.
+
+# ── Layout ───────────────────────────────────────────────────────────────────
+# There is no /etc/personal-infra: it existed only to hold the backup
+# credentials, and Lightsail resource access removed the need for those (G5).
+infra_root: /opt/personal-infra
+docker_network: web
+timezone: UTC
+
+# Name of the nftables table holding the metadata guard (G16). Its own table,
+# not a rule in Docker's DOCKER-USER chain, so Docker rebuilding its firewall
+# cannot remove it. Inspect it with:  nft list table inet personal_infra_guard
+imds_guard_table: personal_infra_guard
+
+# ── Postgres (AD-3, AD-1) ────────────────────────────────────────────────────
+# Pinned to 18 because the Lightsail managed source runs 18.4 and pg_restore
+# only moves forward across majors (G14). Debian-based, not Alpine: glibc
+# collation matches the source, so index ordering survives the restore.
+postgres_image: postgres:18
+postgres_container: postgres
+postgres_data_volume: pgdata
+
+# AD-1's 2 GB budget, passed as `-c` flags in the Compose command (spec §9.5).
+# Leaving Ubuntu/upstream defaults on a 2 GB host invites the OOM killer:
+# stock shared_buffers is 128MB but stock max_connections is 100, and 100
+# backends at the default work_mem is what actually overruns the box.
+postgres_settings:
+  shared_buffers: 256MB
+  effective_cache_size: 768MB
+  maintenance_work_mem: 64MB
+  work_mem: 4MB
+  max_connections: "40"
+  # 2 vCPU — parallelism beyond this buys nothing and costs memory per worker.
+  max_worker_processes: "2"
+  max_parallel_workers: "2"
+  max_parallel_workers_per_gather: "1"
+  # SSD-backed; the default 4.0 assumes spinning rust and suppresses index scans.
+  random_page_cost: "1.1"
+  wal_compression: "on"
+  # Log slow queries only — a chatty log on a 60 GB disk is its own outage.
+  log_min_duration_statement: "500ms"
+
+# ── Caddy (AD-4, AD-8) ───────────────────────────────────────────────────────
+caddy_image: caddy:2-alpine
+caddy_container: caddy
+# G8: 50 certificates per registered domain per week, shared across every
+# origin-* name. Set true to point Caddy at Let's Encrypt STAGING while
+# iterating on vhosts, then flip to false for the real issuance. G7 makes this
+# more than a nicety: .dev is HSTS-preloaded, so a bad cert means unreachable,
+# not degraded.
+caddy_acme_staging: false
+caddy_acme_email: kenesparta@pm.me
+
+# ── Deploy timer (AD-5, A5) ──────────────────────────────────────────────────
+# Ansible installs this timer and then stays out of the way; deploys happen
+# without it. Worst-case latency from `docker push` to live is one interval.
+deploy_interval: "*:0/10"
+deploy_splay: 120
+
+# ── Backups ──────────────────────────────────────────────────────────────────
+# `terraform output -raw backup_bucket`. Ansible does not read Terraform state,
+# so this is the one value copied by hand between the two stages.
+backup_bucket: kenesparta-infra-backups
+backup_region: us-east-1
+# Empty = the standard S3 endpoint. Only set this if Lightsail's S3-compatible
+# endpoint ever needs naming explicitly.
+backup_endpoint_url: ""
+backup_local_dir: /var/backups/personal-infra
+# Local copies only. Nothing prunes the bucket: Lightsail buckets have no
+# lifecycle rules, keys are timestamped so nothing is ever overwritten, and a
+# dump of this database is measured in megabytes against a 5 GB bundle.
+# Deleting old objects stays a deliberate manual act.
+backup_local_retention_days: 14
+backup_schedule: "03:00"

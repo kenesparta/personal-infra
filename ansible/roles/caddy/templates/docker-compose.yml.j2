@@ -1,0 +1,48 @@
+# Managed by Ansible (personal-infra, role: caddy) — edits will be reverted.
+# spec §9.2, §9.3
+name: infra-caddy
+
+services:
+  caddy:
+    image: {{ caddy_image }}
+    container_name: {{ caddy_container }}
+    restart: unless-stopped
+
+    # The ONE exception to "no container publishes host ports" (acceptance
+    # criterion 9). Port 80 is not optional: Let's Encrypt validates the
+    # origin-* names over HTTP-01, and AD-4 rules out the DNS-01 plugin that
+    # would avoid it.
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+
+    networks:
+      - {{ docker_network }}
+
+    env_file:
+      - .env
+
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # G8 — LOAD-BEARING. /data holds the issued certificates and the ACME
+      # account key. Lose it and Caddy re-issues every origin-* certificate on
+      # the next start, against a budget of 50 per week for the whole of
+      # kenesparta.dev. A few careless recreations is a multi-day lockout, and
+      # .dev being HSTS-preloaded (G7) makes that an outage, not a warning.
+      - caddy_data:/data
+      - caddy_config:/config
+
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+volumes:
+  caddy_data:
+  caddy_config:
+
+networks:
+  {{ docker_network }}:
+    external: true

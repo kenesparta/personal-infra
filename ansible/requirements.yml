@@ -1,0 +1,12 @@
+# Install with `make deps`.
+#
+# Spec §6's "no Ansible collections" bars *authoring* one for our own roles
+# (alongside "no Terraform modules"), not depending on upstream ones. Only
+# community.docker is used, and only for docker_compose_v2 — which drives the
+# `docker compose` CLI and therefore needs no Docker SDK for Python on the
+# target host. Everything else is ansible.builtin, including the `web` network,
+# which is created with `docker network create` precisely to avoid pulling in
+# community.docker's SDK-backed modules.
+collections:
+  - name: community.docker
+    version: ">=3.10.0"

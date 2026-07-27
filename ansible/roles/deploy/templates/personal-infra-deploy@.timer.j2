@@ -1,0 +1,19 @@
+# Managed by Ansible (personal-infra, role: deploy) — edits will be reverted.
+# Instantiated per project: personal-infra-deploy@blog.timer
+
+[Unit]
+Description=Poll GHCR for new %i images
+
+[Timer]
+OnCalendar={{ deploy_interval }}
+
+# Without this every project's timer fires on the same second, and on a 2 GB
+# host four simultaneous image pulls compete with Postgres for memory (AD-1).
+RandomizedDelaySec={{ deploy_splay }}
+
+# Run a missed cycle after a reboot instead of waiting for the next tick, so a
+# host that was down during a release converges on its own.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

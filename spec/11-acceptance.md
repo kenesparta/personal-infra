@@ -7,7 +7,9 @@
 5. A direct request to any `origin-*.kenesparta.dev` without `X-Origin-Verify` returns 403.
 6. Port 22 is unreachable from an IP outside `ssh_allowed_cidrs`.
 7. Caddy serves valid Let's Encrypt certificates on every origin hostname.
-8. Postgres does not listen on any non-loopback interface (`ss -tlnp` confirms `127.0.0.1` only).
+8. Postgres is unreachable from off the host. Since AD-3 containerized it, `ss -tlnp` on the host shows **no** listener
+   on 5432 at all — the socket lives in the container's namespace — and `docker compose ps` shows no published port.
+   `psql` from any address other than the `web` network fails to connect.
 9. No container publishes ports to the host except Caddy.
 10. A `pg_dump` artifact exists in the backup bucket and has been restored successfully at least once.
 11. Route 53 zones retain their original zone IDs and DNSSEC remains `SIGNED`; mail to the Proton addresses still

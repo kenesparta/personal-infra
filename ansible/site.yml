@@ -1,0 +1,89 @@
+---
+# Everything between "the instance exists" and "applications can be deployed"
+# (AD-7). It does NOT deploy application code — the systemd timer installed by
+# the `deploy` role does that, continuously, without Ansible (A5).
+#
+#   make configure     # this playbook
+#   make configure     # ...and again: the second run must report 0 changed (A1)
+#
+# Hardening is deliberately absent. See harden.yml and A4.
+
+- name: Configure the application host
+  hosts: app
+  become: true
+
+  # spec §5.3 — the SAME file Terraform reads with yamldecode. Relative to this
+  # playbook, so it resolves to the repository root. Never copy it into
+  # group_vars: two copies is exactly the drift this design exists to prevent.
+  vars_files:
+    - ../projects.yml
+
+  pre_tasks:
+    - name: Fail early rather than half-configure the host
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - projects is defined and projects | length > 0
+          - projects | length <= 4
+          - projects | map(attribute='name') | list | unique | length == projects | length
+          - projects | map(attribute='port') | list | unique | length == projects | length
+        fail_msg: >-
+          projects.yml is unusable: it must define 1-4 projects (C3 — RAM-bound
+          at small_3_0, see AD-1) with unique names and unique ports.
+
+    - name: Require project identifiers to be safe in every context they reach
+      # A project's `name` and `database` are interpolated into SQL identifiers,
+      # a container name, a Docker DNS label, a systemd unit instance and a
+      # directory path. Constraining them once here is what lets the roles
+      # interpolate them without quoting gymnastics at each site.
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - item.name is match('^[a-z][a-z0-9_]{0,30}$')
+          - item.database is match('^[a-z][a-z0-9_]{0,30}$')
+          - item.port | int > 1024
+        fail_msg: >-
+          Project '{{ item.name }}': `name` and `database` must be lowercase,
+          start with a letter, and contain only letters, digits and
+          underscores; `port` must be above 1024.
+      loop: "{{ projects }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Require the vault to be present and populated
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - vault_origin_secret is defined and vault_origin_secret | length > 0
+          - vault_ghcr_token is defined and vault_ghcr_token | length > 0
+          - vault_postgres_superuser_password is defined and vault_postgres_superuser_password | length > 0
+        fail_msg: >-
+          group_vars/vault.yml is missing, empty, or not being decrypted.
+          Create it with `make vault/create` (template: vault.yml.example),
+          then re-run. See spec §9.4.
+
+    - name: Require a Postgres password for every project
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - vault_postgres_passwords[item.name] is defined
+          - vault_postgres_passwords[item.name] | length > 0
+        fail_msg: >-
+          No vault_postgres_passwords entry for '{{ item.name }}'. Every project
+          in projects.yml needs its own; they are the only isolation between
+          projects on the shared `web` network (G15).
+      loop: "{{ projects }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+  roles:
+    # Order is a dependency chain, not a preference: docker needs common's apt
+    # setup, postgres and caddy need docker's `web` network, deploy needs both
+    # (a project container starts against Postgres and is proxied by Caddy),
+    # and backup needs a running Postgres to dump.
+    - common
+    - docker
+    - postgres
+    - caddy
+    - deploy
+    - backup

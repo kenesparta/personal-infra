@@ -10,6 +10,10 @@ ssh_allowed_cidrs = ["203.0.113.4/32"]
 
 # ── Optional: all of these have working defaults ─────────────────────────────
 
+# Lightsail bucket names are globally unique across ALL accounts — if apply
+# fails with "bucket name is not available", pick another. Not a secret.
+# backup_bucket_name  = "kenesparta-infra-backups"
+
 # instance_name       = "kenesparta-host"
 # availability_zone   = "us-east-1a"   # verify: aws lightsail get-regions --include-availability-zones
 # blueprint_id        = "ubuntu_24_04" # verify: aws lightsail get-blueprints

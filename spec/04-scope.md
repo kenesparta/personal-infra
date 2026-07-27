@@ -17,7 +17,7 @@
 - Instance firewall rules, automatic snapshot add-on
 - `origin-<project>.kenesparta.dev` A records
 - Per-project CloudFront distributions with the origin secret header
-- Lightsail bucket for database backups
+- Lightsail bucket for database backups, and the instance→bucket resource access that replaces its access key (G5)
 - One-time bootstrap via `user_data`
 
 **Destroyed:**
@@ -32,7 +32,7 @@
 - Base packages, `unattended-upgrades`, timezone, `fail2ban`
 - Docker Engine, Compose plugin, the external `web` network
 - GHCR registry authentication
-- PostgreSQL: install, loopback-only binding, per-project databases and roles
+- PostgreSQL: a single container on `web` publishing no host port, per-project databases and roles (AD-3)
 - Caddy stack and templated `Caddyfile`, including the origin-secret gate
 - systemd deploy units and timers
 - `pg_dump` backup script and its timer

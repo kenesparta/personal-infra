@@ -1,0 +1,28 @@
+# Managed by Ansible (personal-infra, role: backup) — edits will be reverted.
+
+[Unit]
+Description=pg_dump every project database to the Lightsail bucket
+Requires=docker.service
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+
+# No EnvironmentFile and no credentials: the instance is attached to the bucket
+# with Lightsail resource access (terraform/storage.tf), so the AWS CLI resolves
+# short-lived credentials from instance metadata by itself. Nothing to rotate,
+# nothing to leak, and revocation is detaching the instance (G5).
+#
+# The region is still stated explicitly — metadata can supply it, but a backup
+# failing at 03:00 because credential resolution guessed a region is not a
+# puzzle worth leaving for later.
+Environment=AWS_DEFAULT_REGION={{ backup_region }}
+
+ExecStart=/usr/local/bin/pg-backup.sh
+
+# A dump of a few megabytes should never take this long; if it does, something
+# is wrong and the run should end rather than overlap with tomorrow's.
+TimeoutStartSec=1800
+
+[Install]
+WantedBy=multi-user.target

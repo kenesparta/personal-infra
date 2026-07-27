@@ -1,0 +1,24 @@
+# Managed by Ansible (personal-infra, role: common) — edits will be reverted.
+#
+# Belt and braces: the Lightsail firewall already restricts port 22 to
+# ssh_allowed_cidrs (spec §5.5, acceptance criterion 6), so almost nothing
+# should ever reach sshd to be banned. This catches the case where that list is
+# widened in a hurry and nobody narrows it again.
+
+[DEFAULT]
+# Ubuntu 24.04 does not guarantee /var/log/auth.log — rsyslog is not installed
+# on every image. Reading the journal works either way.
+backend  = systemd
+bantime  = 1h
+findtime = 10m
+maxretry = 5
+# Never ban yourself out of the box.
+ignoreip = 127.0.0.1/8 ::1
+
+[sshd]
+enabled = true
+
+# No jail for Caddy. Its ports are open to the world by necessity (80 for
+# HTTP-01, 443 for CloudFront), and the origin gate returns 403 to anything
+# without X-Origin-Verify (AD-8) — banning on that would ban CloudFront edge
+# nodes, which share addresses with real viewers.

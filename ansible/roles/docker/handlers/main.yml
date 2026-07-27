@@ -1,0 +1,17 @@
+---
+- name: Restart docker
+  ansible.builtin.systemd_service:
+    name: docker
+    state: restarted
+
+- name: Reload systemd for the metadata guard
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+- name: Reload the metadata guard
+  # `systemctl restart` would work too, but loading the file directly is what
+  # the unit does anyway and it keeps the running ruleset in step even if the
+  # unit is momentarily stopped. The ruleset is idempotent by construction —
+  # declare-then-delete — so re-loading never accumulates duplicate rules.
+  ansible.builtin.command: nft --file /etc/nftables.d/imds-guard.nft
+  changed_when: true

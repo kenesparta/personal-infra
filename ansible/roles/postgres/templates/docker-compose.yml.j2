@@ -1,0 +1,60 @@
+# Managed by Ansible (personal-infra, role: postgres) — edits will be reverted.
+# spec AD-3, §9.5
+name: infra-postgres
+
+services:
+  postgres:
+    image: {{ postgres_image }}
+    container_name: {{ postgres_container }}
+    restart: unless-stopped
+
+    # NO `ports:` KEY, EVER. Publishing 5432 would put the database on the
+    # host's public interface — the Lightsail firewall does not cover published
+    # container ports the way you would expect, and acceptance criteria 8 and 9
+    # both forbid it. Applications reach this over `web` by name.
+    networks:
+      - {{ docker_network }}
+
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      # Every TCP connection needs scram-sha-256. `local` (the in-container unix
+      # socket) is left on the image default of trust so `docker exec psql`
+      # works for administration — reaching it already requires host root.
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
+
+    volumes:
+      # LOAD-BEARING, like Caddy's /data (G8). `docker compose down -v` in this
+      # directory destroys every database on the host.
+      - {{ postgres_data_volume }}:/var/lib/postgresql/data
+
+    # Docker's default 64 MB /dev/shm is not enough for parallel workers; they
+    # fail at query time rather than at start, which makes it a confusing
+    # outage rather than an obvious one.
+    shm_size: 256mb
+
+    command:
+      - postgres
+{% for setting, value in postgres_settings | dictsort %}
+      - "-c"
+      - "{{ setting }}={{ value }}"
+{% endfor %}
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+volumes:
+  {{ postgres_data_volume }}:
+
+networks:
+  {{ docker_network }}:
+    external: true
