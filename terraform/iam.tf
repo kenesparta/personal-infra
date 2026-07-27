@@ -72,88 +72,8 @@ resource "aws_iam_role" "github_actions_deploy" {
 # so the AWS_ROLE_ARN secret / OIDC binding stay valid; renaming it changes the
 # ARN. It will be doubly inaccurate after Phase 7 (no ECR, no ECS). Leave it.
 
-# LEGACY — deleted in Phase 7. Lightsail container-service actions don't support
-# resource-level ARNs, so Resource must be "*".
-resource "aws_iam_role_policy" "github_actions_lightsail" {
-  name = "lightsail-deploy-policy"
-  role = aws_iam_role.github_actions_deploy.id
 
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Sid    = "AllowLightsailContainerDeploy"
-        Effect = "Allow"
-        Action = [
-          "lightsail:GetContainerServices",
-          "lightsail:GetContainerServiceDeployments",
-          "lightsail:CreateContainerServiceDeployment"
-        ]
-        Resource = "*"
-      }
-    ]
-  })
-}
 
-# LEGACY — deleted in Phase 7 when publish-image.yml moves to GHCR.
-resource "aws_iam_role_policy" "github_actions_ecr" {
-  name = "ecr-push-policy"
-  role = aws_iam_role.github_actions_deploy.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Sid      = "AllowEcrAuth"
-        Effect   = "Allow"
-        Action   = ["ecr:GetAuthorizationToken"]
-        Resource = "*"
-      },
-      {
-        Sid    = "AllowEcrPushPull"
-        Effect = "Allow"
-        Action = [
-          "ecr:BatchCheckLayerAvailability",
-          "ecr:BatchGetImage",
-          "ecr:GetDownloadUrlForLayer",
-          "ecr:InitiateLayerUpload",
-          "ecr:UploadLayerPart",
-          "ecr:CompleteLayerUpload",
-          "ecr:PutImage",
-          "ecr:DescribeRepositories",
-          "ecr:ListTagsForResource",
-          "ecr:GetRepositoryPolicy"
-        ]
-        Resource = aws_ecr_repository.app.arn
-      }
-    ]
-  })
-}
-
-# LEGACY — deleted in Phase 7. Note the resource still points at the OLD state
-# key; CI no longer runs terraform after the cutover, so it is not repointed.
-resource "aws_iam_role_policy" "github_actions_tfstate" {
-  name = "tf-state-policy"
-  role = aws_iam_role.github_actions_deploy.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Sid      = "AllowStateList"
-        Effect   = "Allow"
-        Action   = ["s3:ListBucket"]
-        Resource = "arn:aws:s3:::tf.kenesparta.dev"
-      },
-      {
-        Sid      = "AllowStateReadWrite"
-        Effect   = "Allow"
-        Action   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
-        Resource = "arn:aws:s3:::tf.kenesparta.dev/dns/prod/kenesparta.dev*"
-      }
-    ]
-  })
-}
 
 # SURVIVES Phase 7 — typst-resume publishes to the CDN bucket.
 resource "aws_iam_role_policy" "github_actions_s3" {

@@ -46,7 +46,22 @@ projects:
     image: ghcr.io/kenesparta/kenespartadev
     port: 3000
     database: blog
+    env:                              # optional: non-secret container env, verbatim
+      LEPTOS_SITE_ADDR: "0.0.0.0:3000"
+      RUST_LOG: info
 ```
+
+Two optional fields extend an entry (added in rev 2.3, for `budget`):
+
+- `env` — a map of **non-secret** environment variables written verbatim into the project's `.env`. Secret values
+  belong in `vault_project_env.<name>` (spec §9.4), which the deploy role merges in; nothing secret goes in this file.
+- `origin_gate_env` — the name of an env var to fill with `vault_origin_secret`, for applications that verify the
+  `X-Origin-Verify` header themselves in addition to Caddy's gate (the budget bot's `ORIGIN_SECRET`). One source,
+  no second copy to rotate (G13).
+
+Each **non-blog** project gets its own CloudFront distribution and `hostname` alias records generated from this file
+(blog keeps the migrated singleton distribution in `cloudfront.tf`). All of them ride the wildcard ACM certificate —
+`hostname` must stay within `*.kenesparta.dev` (or the apex).
 
 ## 5.4 Instance configuration
 

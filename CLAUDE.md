@@ -4,15 +4,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-**All code through Phase 3 is written; nothing has been applied.** `spec/`, `terraform/` (including `storage.tf`),
-`ansible/` (all seven roles), `projects.yml` and the `Makefile` exist. What has *not* happened: the Phase 0 state copy
-(`s3://tf.kenesparta.dev/infra/prod/terraform.tfstate` does not exist yet — only the old `dns/prod/kenesparta.dev`
-key), and any `terraform apply` (no Lightsail instance, static IP or bucket exists). Phases 4–9 are unwritten by
-design; they are migration procedure, not code.
+**The migration is complete through Phase 7 (2026-07-27).** The instance serves both projects in production:
+`kenesparta.dev` (blog) and `bot.kenesparta.dev` (budget Telegram bot), each behind its own CloudFront distribution →
+Caddy (Let's Encrypt) → container, with data restored into the host Postgres. The old estates are gone: the container
+services, ECR repositories, managed database, `../kenesparta.dev/tf` and `../budget-assistant/deploy/tf` are all
+destroyed or deleted; this repository's state (`s3://tf.kenesparta.dev/infra/prod/terraform.tfstate`) is the account's
+only live Terraform. **Remaining: Phase 8 (hardening — needs an Ubuntu Pro token in the vault and a snapshot first) and
+Phase 9 (backup-restore rehearsal).** The final pre-migration dumps live at
+`s3://kenesparta-infra-backups/managed-db-final/`.
 
-This is not a greenfield project. It is a **migration** that absorbs a working estate from a second repository,
-`../kenesparta.dev` (added to the session with `/add-dir`). Read `spec/` before touching anything — it is rev 2 and
-records decisions that reverse parts of rev 1.
+Read `spec/` before touching anything — it is rev 2.3 and records decisions that reverse parts of earlier revisions;
+`spec/10-phases.md` carries as-executed annotations where reality diverged from the plan.
 
 ## `spec/` is the source of truth
 
@@ -90,10 +92,10 @@ make harden        # ansible-playbook harden.yml (deliberate, never part of site
 make syntax        # parse both playbooks without touching the host
 ```
 
-AWS access is SSO and expires. Before any apply, log in from the *application* repo, which holds the profile name:
+AWS access is SSO and expires. Before any apply:
 
 ```bash
-cd ../kenesparta.dev/tf && make login      # aws sso login --profile $TF_VAR_aws_sso_profile
+make login      # aws sso login --profile $TF_VAR_aws_sso_profile (from terraform/.env)
 ```
 
 Verify blueprint/bundle IDs before applying — they change over time:
@@ -107,13 +109,13 @@ aws lightsail get-bundles    --query 'bundles[].[bundleId,ramSizeInGb,price]' --
 
 Failure modes that are not obvious from any single file (`spec/12-gotchas.md`):
 
-- **Never run `terraform destroy` in `../kenesparta.dev/tf`.** That state owns the Route 53 zones, their DNSSEC
-  key-signing keys, and the KMS keys. Destroying it breaks mail delivery to the Proton addresses, not just the website,
-  and KMS keys enter an unshortenable 7-day deletion window. Retirement means *deleting the directory* after Phase 0
-  verifies the new state.
-- **State moves by copying the S3 object, not by `import` blocks** (AD-9). Resource addresses must be preserved
-  verbatim — `aws_route53_zone.kenespartadev`, `aws_kms_key.kenespartadev_key_dnssec`, and so on. Phase 0's gate is
-  `terraform plan` reporting **no changes**; do not proceed past it on a dirty plan.
+- **Never delete `s3://tf.kenesparta.dev/dns/prod/kenesparta.dev`.** The old `tf/` directory is gone (Phase 7), but
+  that frozen state object is the migration's rollback point (G10) and stays. This repo's state now owns the Route 53
+  zones, their DNSSEC key-signing keys, and the KMS keys — a `terraform destroy` *here* breaks mail delivery to the
+  Proton addresses, not just the websites, and KMS keys enter an unshortenable 7-day deletion window.
+- **State moved by copying the S3 object, not by `import` blocks** (AD-9), preserving resource addresses verbatim.
+  The Phase 0 zero-diff gate passed 2026-07-27 and is historical — since the Phase 6 origin swap it can no longer be
+  green, and `make plan/phase0` says so before running.
 - **`user_data` is `ForceNew`.** Editing `terraform/bootstrap.sh` destroys and recreates the instance. Keep it to the
   minimum that lets Ansible connect. Treat any plan showing instance replacement as data loss unless a snapshot exists.
 - **`aws_lightsail_instance_public_ports` is authoritative, not additive.** It replaces the whole rule set — omitting
@@ -144,10 +146,9 @@ Failure modes that are not obvious from any single file (`spec/12-gotchas.md`):
   daemon start and cannot touch a separate table, and an independent table can be ordered *before* `docker.service`.
   Consequences: `iptables -S` will not show it (use `nft list table inet personal_infra_guard`), and Ubuntu's
   `nftables.service` must stay disabled because its stock config begins with `flush ruleset`.
-- **The Phase 0 gate must be told about every additive `.tf` file.** `make plan/phase0` moves `main.tf`,
-  `outputs-phase1.tf` and `storage.tf` aside so the gate answers only "did the state copy land correctly?". Add a new
-  additive file without adding it there and the gate goes red for a resource that is *supposed* to be new — which looks
-  exactly like the failure it exists to catch.
+- **The Phase 0 gate is historical** (passed 2026-07-27). It moved the additive `.tf` files aside so it answered only
+  "did the state copy land correctly?"; since the Phase 6 origin swap and Phase 7 deletion of `legacy.tf` it can no
+  longer report clean, and the target now prints a notice saying so.
 - **The backup bucket's access key is created out of band, on purpose.** `aws_lightsail_bucket_access_key` would write
   the secret half into Terraform state in plaintext (G5). Same reasoning as AD-10's GHCR PAT.
 

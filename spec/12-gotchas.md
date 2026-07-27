@@ -125,3 +125,10 @@ Two things to know:
 The guard covers bridge-networked containers, which is all of them by design. A container using `network_mode: host`
 shares the host's stack, so its traffic is `output` and the guard does not apply — do not add one. Do not remove the
 guard while resource access is in place, and do not grant resource access to a second host without it.
+
+**G17 — Never bind-mount a single config file into a container that Ansible templates.** `ansible.builtin.template`
+replaces files by atomic rename, which allocates a new inode; a single-file bind mount stays pinned to the old one, so
+the container keeps reading the pre-edit content forever. Found in Phase 6: the Caddyfile flip from the staging CA
+produced `changed` on the template task, the reload handler ran — and Caddy logged `config is unchanged`, because
+inside the container the file had never changed. Mount a directory (renames inside a mounted directory are visible)
+and keep the templated file in it.

@@ -45,11 +45,6 @@ variable "link_dns" {
   default = "kecc.link"
 }
 
-variable "image_version" {
-  description = "LEGACY (destroyed in Phase 7): tag of the backend image in ECR for the Lightsail container service."
-  type        = string
-  default     = "latest"
-}
 
 # ── Instance (Phase 1) ───────────────────────────────────────────────────────
 

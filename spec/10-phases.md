@@ -63,12 +63,17 @@ Each phase ends with a verifiable outcome and is independently revertible. The s
 
 ## Phase 7 — Teardown
 
-- [ ] Destroy the container service and deployment version
-- [ ] Destroy the ECR repository and its policies; trim the CI role to the CDN write only
+- [x] Destroy the container service and deployment version — *2026-07-27, with the sops data block moved from
+      `legacy.tf` into `cloudfront.tf` (its consumers) first. The `budget-bot` estate went separately the same day,
+      destroyed via its own retired state (15 resources) as part of adopting that project into `projects.yml`.*
+- [x] Destroy the ECR repository and its policies; trim the CI role to the CDN write only — *the repository had to be
+      emptied first (`batch-delete-image`); the migrated resource carried no `force_delete`*
 - [x] Delete the Lightsail managed database (**only after Phase 4 is verified**) — *done early, out of band, by the
       operator on 2026-07-27 after taking final dumps; see the Phase 4 note*
-- [ ] Delete `kenesparta.dev/tf` from the application repository
-- **Verify:** `terraform plan` clean; monthly cost trending toward the model in [§14](14-cost.md)
+- [x] Delete `kenesparta.dev/tf` from the application repository — *2026-07-27; the old state object
+      `dns/prod/kenesparta.dev` stays in S3 as the frozen rollback point (G10)*
+- **Verify:** `terraform plan` clean; monthly cost trending toward the model in [§14](14-cost.md) — *plan clean
+  2026-07-27, `-detailed-exitcode` 0*
 
 ## Phase 8 — Hardening (deliberate, separate)
 

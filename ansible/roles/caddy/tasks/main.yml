@@ -11,6 +11,16 @@
     group: root
     mode: "0755"
 
+- name: Create the Caddy config directory
+  # Mounted as a DIRECTORY into the container (G17): a single-file bind mount
+  # pins the inode and never sees Ansible's atomic template replacement.
+  ansible.builtin.file:
+    path: "{{ infra_root }}/caddy/conf"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: Write the Caddy environment file
   ansible.builtin.template:
     src: env.j2
@@ -23,11 +33,16 @@
 - name: Write the Caddyfile
   ansible.builtin.template:
     src: Caddyfile.j2
-    dest: "{{ infra_root }}/caddy/Caddyfile"
+    dest: "{{ infra_root }}/caddy/conf/Caddyfile"
     owner: root
     group: root
     mode: "0644"
   register: caddy_config
+
+- name: Remove the pre-G17 Caddyfile location
+  ansible.builtin.file:
+    path: "{{ infra_root }}/caddy/Caddyfile"
+    state: absent
 
 - name: Write the Caddy Compose file
   ansible.builtin.template:

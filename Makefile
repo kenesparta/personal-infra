@@ -77,7 +77,10 @@ state/seed: ## Phase 0 step 1 — copy the old state object to the new key (idem
 # Phase 1; storage.tf is the Phase 3 backup bucket. Forget one and the gate goes
 # red for a resource that is *supposed* to be new, which is indistinguishable
 # from the failure it exists to catch.
-plan/phase0: ## Phase 0 step 2 — GATE: must report "No changes"
+plan/phase0: ## HISTORICAL — Phase 0 gate; passed 2026-07-27, cannot be green post-Phase 6
+	@echo "NOTE: this gate passed on 2026-07-27 and is retained for the record." ; \
+	 echo "Since Phase 6 the migrated estate has legitimately changed (origin swap," ; \
+	 echo "legacy.tf deleted in Phase 7), so a dirty result here is expected."
 	@set -e; \
 	hold=$$(mktemp -d); \
 	trap 'mv "$$hold"/*.tf terraform/ 2>/dev/null || true; rmdir "$$hold" 2>/dev/null || true' EXIT; \
@@ -223,7 +226,9 @@ check-ssh: inventory ## verify the host accepts an Ansible connection (Phase 2 g
 	@cd ansible && ansible -i inventory/hosts.ini app -m ping
 
 syntax: ## parse both playbooks without touching the host
-	@cd ansible && ansible-playbook --syntax-check -i localhost, site.yml harden.yml
+	@# VAULT_ARGS because both playbooks load group_vars/vault.yml via
+	@# vars_files (spec §9.4) — even a parse needs to decrypt it.
+	@cd ansible && ansible-playbook --syntax-check -i localhost, $(VAULT_ARGS) site.yml harden.yml
 
 # ── Ansible vault ────────────────────────────────────────────────────────────
 

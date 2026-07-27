@@ -24,7 +24,10 @@ services:
       - .env
 
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # A DIRECTORY, not the file: Ansible templates by atomic rename, and a
+      # single-file bind mount pins the old inode — the container would keep
+      # reading the pre-edit config forever (G17).
+      - ./conf:/etc/caddy:ro
       # G8 — LOAD-BEARING. /data holds the issued certificates and the ACME
       # account key. Lose it and Caddy re-issues every origin-* certificate on
       # the next start, against a budget of 50 per week for the whole of

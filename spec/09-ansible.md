@@ -59,6 +59,7 @@ relying on the convention would silently load nothing.
 | `vault_postgres_passwords`     | `postgres`, `deploy` | Map of `<project name>` → password, one per `projects.yml` entry |
 | `vault_origin_secret`          | `caddy`    | Must equal the CloudFront `custom_header` value (G13)          |
 | `vault_ghcr_username` / `vault_ghcr_token` | `docker` | GHCR PAT, `read:packages` scope only (AD-10)       |
+| `vault_project_env`            | `deploy`   | Map of `<project name>` → map of **secret** env vars, merged into the project's `.env` (rev 2.3; non-secret env lives in `projects.yml`) |
 | `vault_ubuntu_pro_token`       | `hardening`| Only needed by `harden.yml`                                    |
 
 The backup path holds **no** credential: the instance is attached to the bucket with Lightsail resource access, so the
