@@ -7,7 +7,14 @@
 - Route 53 zones `kenesparta.dev` and `kecc.link`, both DNSSEC-signed, with their KMS key-signing keys
 - Proton mail records (MX, SPF, 3× DKIM, DMARC) and the Discord verification record
 - ACM certificate (`kenesparta.dev` + `*.kenesparta.dev`) and its DNS validation records
-- `cdn.kenesparta.dev` — S3 bucket, CloudFront distribution, OAC, CORS response-headers policy
+- `cdn.kenesparta.dev` — S3 bucket, CloudFront distribution, OAC, and (rev 2.4) two response-headers policies carrying
+  the CORS config plus browser `Cache-Control`. The distribution's TTLs govern only CloudFront's own edge cache, never
+  the browser, so these headers are the sole source of repeat-visit caching. Filename-versioned, write-once paths —
+  `fonts/*` (`solway-v19-…`) and `blog/*` — get `public, max-age=31536000, immutable` with override on: replacing an
+  asset there means renaming it. Everything else stays on the default behavior's `public, max-age=300` with override
+  **off**, so deliberate per-object metadata wins — notably `cv/ken_esparta_cv.pdf`, a shared stable URL the
+  typst-resume CI overwrites in place and uploads with `max-age=3600`. Never serve a stable-name,
+  overwritten-in-place object from an immutable path — see G19.
 - GitHub Actions OIDC provider and deploy role
 
 **New:**

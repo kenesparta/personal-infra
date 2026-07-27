@@ -130,6 +130,12 @@ Failure modes that are not obvious from any single file (`spec/12-gotchas.md`):
 - **Let's Encrypt limits are per registered domain.** The `origin-*` names share `kenesparta.dev`'s 50-cert weekly
   budget with everything else. Caddy's `/data` volume must persist across container recreation, and `.dev` is
   HSTS-preloaded so a TLS error makes the site unreachable rather than degraded — iterate against LE staging.
+- **The CDN's `immutable` header cannot be taken back** (G19). On `cdn.kenesparta.dev`, `fonts/*` and `blog/*` carry
+  `Cache-Control: public, max-age=31536000, immutable` — a browser that holds an object keeps it for a year and no
+  CloudFront invalidation can reach it, so changing an asset there means renaming it. Stable-name objects overwritten
+  in place (`cv/ken_esparta_cv.pdf`, `img/*`) stay on the default behavior, whose five-minute fallback has override
+  **off** so the typst-resume CI's own `max-age=3600` on the CV wins. The headers land on error responses too — an
+  asset must exist before anything references it, or the 403 gets pinned as well.
 - **Idempotency is an acceptance criterion.** A second consecutive `make configure` must report zero `changed`. Use
   handlers; never restart unconditionally.
 - **Hardening is a separate playbook.** `usg fix` can lock you out. Snapshot, run `harden.yml`, verify

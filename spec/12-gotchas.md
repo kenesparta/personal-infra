@@ -150,3 +150,16 @@ guard (G16). A host-level default-deny firewall here would either duplicate the 
 management, and `iptables-persistent` would restore a stale snapshot of Docker's dynamic rules at boot. The `docker`
 role additionally enforces `nftables.service` disabled and stopped, so even an untailored `usg fix` cannot leave the
 boot-time flush armed. After a USG benchmark upgrade, regenerate the tailoring and re-apply the 22 deselections.
+
+**G19 — `immutable` cannot be taken back, and CloudFront TTLs never reach the browser.** (rev 2.4) The CDN
+distribution's min/default/max TTLs govern only CloudFront's edge cache; what a browser does comes from the
+`Cache-Control` response header, and a CloudFront invalidation clears the edge, never a browser that already holds the
+object. An object served once with `public, max-age=31536000, immutable` is pinned in that browser for up to a year
+with no server-side undo. The CDN therefore carries two response-headers policies (spec §4): the year-long immutable
+header is attached via ordered cache behaviors only to the filename-versioned, write-once paths `fonts/*` and
+`blog/*`, while the default behavior sends `public, max-age=300` with override **off**, deferring to per-object
+`Cache-Control` metadata — which is how the typst-resume CI keeps `cv/ken_esparta_cv.pdf`, a shared stable URL
+overwritten in place, at one hour. Two sharp edges: response-headers policies apply to error responses too, so
+requesting a not-yet-uploaded asset under an immutable path pins the 403 as well — upload assets *before* publishing
+references to them; and per-object metadata is honoured only on the default behavior, because the immutable policy
+overrides it.

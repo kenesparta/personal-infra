@@ -23,7 +23,7 @@ source of truth — see [§1](01-purpose.md): if implementation needs something 
 | 9  | [Ansible Specification](09-ansible.md)     | Inventory handoff, the seven roles, A1–A6 conventions            |
 | 10 | [Migration Phases](10-phases.md)           | Phase 0–9, in order, each with its verification gate             |
 | 11 | [Acceptance Criteria](11-acceptance.md)    | The 14 checks that define "done"                                 |
-| 12 | [Gotchas](12-gotchas.md)                   | G1–G18 — failure modes not obvious from any single file          |
+| 12 | [Gotchas](12-gotchas.md)                   | G1–G19 — failure modes not obvious from any single file          |
 | 13 | [Out of Scope](13-out-of-scope.md)         | Deferred, with the trigger to reconsider each                    |
 | 14 | [Cost Model](14-cost.md)                   | Current vs target monthly spend                                  |
 

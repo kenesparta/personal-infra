@@ -13,27 +13,25 @@ this host.
 
 ---
 
-## Status: mid-migration
+## Status: migrated — in production
 
-This repository is absorbing a working estate from [`../kenesparta.dev`](../kenesparta.dev), which today runs the site
-on a Lightsail **Container Service** fronted by CloudFront, pulling a private ECR image, backed by a Lightsail
-**managed** PostgreSQL.
+All phases 0–9 were applied and verified on 2026-07-27; [`spec/10-phases.md`](spec/10-phases.md) carries as-executed
+annotations where reality diverged from the plan. The instance serves both projects in production —
+`kenesparta.dev` (blog) and `bot.kenesparta.dev` (budget Telegram bot) — each behind its own CloudFront distribution →
+Caddy (Let's Encrypt) → container, with the data restored into the host Postgres.
 
-| Phase | What                                                     | State                    |
-|-------|----------------------------------------------------------|--------------------------|
-| 0     | State consolidation (copy the state object)              | written, **not applied** |
-| 1     | Instance, static IP, firewall, snapshots                 | written, **not applied** |
-| 2     | Verify the bootstrap                                     | —                        |
-| 3     | Ansible: common, docker, postgres, caddy, deploy, backup | written, **not applied** |
-| 4     | Data migration: managed Postgres → host                  | —                        |
-| 5     | Registry cutover: ECR → GHCR                             | —                        |
-| 6     | Edge cutover: CloudFront origin swap                     | —                        |
-| 7     | Teardown: container service, ECR, `kenesparta.dev/tf`    | —                        |
-| 8     | CIS hardening (deliberate, separate)                     | —                        |
-| 9     | Validation: restore a backup for real                    | —                        |
+The old estate is gone: the Lightsail Container Service, the ECR repositories, the managed PostgreSQL and the old
+`../kenesparta.dev/tf` and `../budget-assistant/deploy/tf` directories are destroyed or deleted, and this repository's
+state (`s3://tf.kenesparta.dev/infra/prod/terraform.tfstate`) is the account's **only** live Terraform. The host is
+Ubuntu-Pro-attached and CIS Level 1 hardened — via the G18-tailored profile only, never the stock one.
 
-The site stays up throughout. The apex `A ALIAS → CloudFront` record never changes, so the host cutover in Phase 6 is a
-CloudFront **origin swap**, not a DNS change — no propagation wait, and rollback is the same one-line change in reverse.
+The backup path is proven end-to-end: dumps upload nightly to `s3://kenesparta-infra-backups/postgres/<db>/`, and a
+bucket → scratch-database restore was rehearsed on 2026-07-27 with row-for-row parity (Phase 9). The final
+pre-migration dumps live at `s3://kenesparta-infra-backups/managed-db-final/`; the pre-hardening rollback snapshot is
+`pre-harden-2026-07-27`.
+
+The cutover never touched DNS: the apex `A ALIAS → CloudFront` record was constant throughout, so Phase 6 was a
+CloudFront **origin swap** — and rollback remains the same one-line change in reverse.
 
 ---
 
@@ -54,6 +52,13 @@ this costs nothing extra.
 `origin-facing` managed prefix list, whose ranges rotate. The origin is gated at the application layer instead — Caddy
 403s anything without the shared `X-Origin-Verify` header (G11).
 
+**The static CDN is separate.** `cdn.kenesparta.dev` serves fonts, images and the CV from S3 through its own
+distribution (`terraform/static-cdn.tf`), written to by the typst-resume repo's CI role — no part of the host is
+involved. Browser caching splits by path: `fonts/*` and `blog/*` are filename-versioned, write-once, and carry
+`Cache-Control: public, max-age=31536000, immutable` — replacing an asset there means renaming it — while everything
+else (the CV, `img/*`) is overwritten in place and stays on a five-minute default that defers to per-object metadata.
+See spec §4 and G19 before touching any of it.
+
 ---
 
 ## Prerequisites
@@ -62,7 +67,7 @@ this costs nothing extra.
 |------------------|----------------------------------------------------------|
 | Terraform ≥ 1.10 | Native S3 state locking (`use_lockfile`); CI pins 1.15.8 |
 | AWS CLI v2       | SSO login, state seeding, Lightsail lookups              |
-| Ansible          | Host configuration (Phase 3 onward)                      |
+| Ansible          | Host configuration                                       |
 | `sops` + `age`   | Decrypts `secrets/prod.enc.env`                          |
 
 Also needed:
@@ -88,41 +93,34 @@ authoritative and a wildcard there exposes SSH globally.
 make help          # list targets
 ```
 
-### Phase 0 — state consolidation
-
-The old state already contains every resource that is moving, so it is **copied**, not re-imported. Resource addresses
-are preserved verbatim, which is why there are no `import` blocks anywhere in this repo.
+### Terraform — the edge and the host
 
 ```bash
-make state/seed    # copy old state object → new key (prompts; source is never modified)
-make plan/phase0   # THE GATE — must report "No changes"
+make login         # AWS SSO — it expires; run before any plan or apply
+make plan          # writes tf.plan; read it before applying
+make apply         # applies the saved tf.plan
 ```
 
-`plan/phase0` moves the Phase 1 files aside and plans the migrated configuration alone, so it answers exactly one
-question: *did the state copy land correctly?* It uses `-detailed-exitcode` — **0 = pass**, 2 = drift.
+Read the plan before applying. A plan that wants to **replace the instance** is data loss, not a change (`user_data`
+is `ForceNew` — see below). A plan that wants to **destroy** anything deserves the same suspicion: this state owns the
+Route 53 zones, their DNSSEC keys, and the KMS keys (G10).
 
-**Do not proceed past a dirty gate.** The usual causes are a provider version bump (`aws` is pinned to `6.15.0`
-precisely to avoid this) or a changed default for `project` / `owner` / `environment`, which feed `common_tags` on ~20
-resources.
+`make state/seed` and `make plan/phase0` are historical. The Phase 0 state-copy gate passed on 2026-07-27, and since
+the Phase 6 origin swap it can no longer report clean — the target now prints a notice saying exactly that. Resource
+addresses were preserved by copying the state object, which is why there are no `import` blocks anywhere in this repo.
 
-`terraform/.terraform.lock.hcl` **is committed** — deliberately, and unlike the old `kenesparta.dev/tf`, which ignored
-it. The gate depends on provider determinism, and `carlpett/sops` is constrained only to `~> 1.2`; the lock file is the
-only thing actually pinning it to 1.4.1. It carries hashes for both `darwin_arm64` and `linux_amd64`, so an `init` from
-Linux won't fail on a missing checksum. After changing a provider version:
+`terraform/.terraform.lock.hcl` **is committed** — deliberately. Provider determinism is what kept the migration's
+zero-diff gate honest, and it still matters: `carlpett/sops` is constrained only to `~> 1.2`, and the lock file is the
+only thing actually pinning it to 1.4.1 (`aws` is pinned to `6.15.0` in `versions.tf`). It carries hashes for both
+`darwin_arm64` and `linux_amd64`, so an `init` from Linux won't fail on a missing checksum. After changing a provider
+version:
 
 ```bash
 terraform -chdir=terraform providers lock -platform=darwin_arm64 -platform=linux_amd64
 ```
 
-### Phase 1 — the host
-
-```bash
-make plan          # expect: 5 to add, 0 to change, 0 to destroy
-make apply
-ssh ubuntu@$(terraform -chdir=terraform output -raw static_ip)
-```
-
-Verify the blueprint and bundle IDs first — they change over time, and Lightsail supports only a subset of AZs:
+Resizing or rebuilding the instance? Verify blueprint and bundle IDs first — they change over time, and Lightsail
+supports only a subset of AZs:
 
 ```bash
 aws lightsail get-blueprints --query 'blueprints[?platform==`LINUX_UNIX`].[blueprintId,name]' --output table
@@ -130,15 +128,15 @@ aws lightsail get-bundles    --query 'bundles[].[bundleId,ramSizeInGb,price]' --
 aws lightsail get-regions --include-availability-zones --query 'regions[?name==`us-east-1`].availabilityZones[].zoneName'
 ```
 
-### Phase 3 onward — Ansible
+### Ansible — host configuration
 
 ```bash
 make deps          # install community.docker (once per workstation)
 make vault/create  # group_vars/vault.yml from the committed template, then fill it in
-make check-ssh     # ansible -m ping   (Phase 2 gate)
+make check-ssh     # ansible -m ping
 make configure     # site.yml — everything except hardening
 make configure     # ...again: the second run must report 0 changed (acceptance criterion 2)
-make harden        # harden.yml — SNAPSHOT FIRST, see below
+make harden        # harden.yml — SNAPSHOT FIRST; runs usg fix with the G18 tailoring only
 ```
 
 `make inventory` regenerates `ansible/inventory/hosts.ini` from `terraform output -raw static_ip`. Terraform owns the
@@ -186,7 +184,7 @@ chain, which is what makes it survive Docker rebuilding its firewall on every da
 | `caddy`     | The only container publishing host ports; templated Caddyfile, LE certs, the origin gate                                   |
 | `deploy`    | Per-project Compose stack, plus `personal-infra-deploy@<name>.timer` pulling from GHCR every 10 min                        |
 | `backup`    | `/usr/local/bin/pg-backup.sh` and a daily timer writing timestamped dumps to the Lightsail bucket                          |
-| `hardening` | `pro attach`, `pro enable usg`, `usg fix cis_level1_server` — **`harden.yml` only**                                        |
+| `hardening` | `pro attach`, `pro enable usg`, `usg fix --tailoring-file` with the G18 tailoring — **`harden.yml` only**                  |
 
 Postgres runs as a container rather than an apt package (AD-3). The reason is not preference: applications are
 containers on a bridge network, and `127.0.0.1` inside such a container is its own namespace, not the host's — so a
@@ -246,22 +244,29 @@ fifth fails fast instead of discovering it through the OOM killer.
 
 Full list in [`spec/12-gotchas.md`](spec/12-gotchas.md). The ones with no undo:
 
-- **Never run `terraform destroy` in `../kenesparta.dev/tf`.** That state owns the Route 53 zones, their DNSSEC
-  key-signing keys, and the KMS keys. Destroying it breaks **mail delivery to the Proton addresses**, not just the
-  website, and KMS keys enter an unshortenable 7-day deletion window. Retiring that directory means *deleting it* after
-  Phase 0 passes — never destroying it.
+- **Never `terraform destroy` here, and never delete `s3://tf.kenesparta.dev/dns/prod/kenesparta.dev`.** This state
+  owns the Route 53 zones, their DNSSEC key-signing keys, and the KMS keys — destroying it breaks **mail delivery to
+  the Proton addresses**, not just the websites, and KMS keys enter an unshortenable 7-day deletion window. The old
+  `tf/` directory is gone (Phase 7), but that frozen state object is the migration's rollback point (G10) and stays.
 - **`user_data` is `ForceNew`.** Editing `terraform/bootstrap.sh` destroys and recreates the instance, databases
   included. It is minimal by design so it never needs to change. Treat any plan showing instance replacement as data
   loss.
 - **The firewall resource is authoritative.** `aws_lightsail_instance_public_ports` replaces the entire rule set rather
   than merging. Removing the port 22 block removes SSH.
-- **Hardening can lock you out.** `usg fix cis_level1_server` rewrites SSH config, file permissions and kernel
-  parameters. Snapshot first, then verify SSH from a *second* terminal before closing the first.
+- **Hardening can lock you out — and the stock profile breaks Docker.** `usg fix` rewrites SSH config, file
+  permissions and kernel parameters; run it only through `harden.yml`, which applies the G18 tailoring file. Applied
+  bare in Phase 8, `cis_level1_server` flushed Docker's chains and the metadata guard and zeroed `ip_forward` —
+  container networking went dark until repaired. Snapshot first, then verify SSH from a *second* terminal before
+  closing the first.
 - **Let's Encrypt limits are per registered domain** — 50 certs/week shared across every `origin-*` name. Caddy's
   `/data` volume must persist across container recreation, and `.dev` is HSTS-preloaded, so a TLS error makes the site
   unreachable rather than merely degraded. Iterate against LE staging.
 - **The origin secret is a two-sided rotation.** It lives in Terraform state (`custom_header`) and Ansible Vault
   (Caddy's comparison). Change Terraform first, then Ansible — the reverse order 403s every request in the gap.
+- **The CDN's `immutable` header cannot be taken back.** `fonts/*` and `blog/*` are browser-cached for a year;
+  replacing an asset there means renaming it, and a CloudFront invalidation cannot reach a browser that already holds
+  it. Stable-name objects overwritten in place — the CV, `img/*` — must stay off those paths, and an asset must exist
+  *before* anything references it, or the 403 gets pinned too (G19).
 
 ---
 
@@ -323,16 +328,14 @@ key of every committed version, and `secrets/rotate` (a *new* data key) is what 
 
 ## Where things live
 
-| File                   | Contains                                                                                      |
-|------------------------|-----------------------------------------------------------------------------------------------|
-| `spec/`                | Source of truth — decisions, rejected alternatives, phases, gotchas (index: `spec/README.md`) |
-| `CLAUDE.md`            | Guidance for Claude Code sessions                                                             |
-| `projects.yml`         | The project fan-out, shared by both tools                                                     |
-| `terraform/legacy.tf`  | Container service + ECR — everything deleted in Phase 7                                       |
-| `terraform/main.tf`    | The new host (Phase 1)                                                                        |
-| `terraform/storage.tf` | The backup bucket (Phase 3) — its access key deliberately not in state                        |
-| `ansible/site.yml`     | Everything except hardening; `harden.yml` is separate on purpose (A4)                         |
-| `ansible/roles/`       | `common` `docker` `postgres` `caddy` `deploy` `backup` `hardening`                            |
-
-Any additive `.tf` file must also be listed in the `plan/phase0` target, which moves them aside so the Phase 0 gate
-keeps answering only "did the state copy land correctly?" — currently `main.tf`, `outputs-phase1.tf`, `storage.tf`.
+| File                      | Contains                                                                                      |
+|---------------------------|-----------------------------------------------------------------------------------------------|
+| `spec/`                   | Source of truth — decisions, rejected alternatives, phases, gotchas (index: `spec/README.md`) |
+| `CLAUDE.md`               | Guidance for Claude Code sessions                                                             |
+| `projects.yml`            | The project fan-out, shared by both tools                                                     |
+| `terraform/main.tf`       | The instance, static IP, firewall, snapshots                                                  |
+| `terraform/cloudfront.tf` | Per-project distributions and the origin-secret header                                        |
+| `terraform/static-cdn.tf` | `cdn.kenesparta.dev` — bucket, distribution, the split cache policies (G19)                   |
+| `terraform/storage.tf`    | The backup bucket — its access key deliberately not in state                                  |
+| `ansible/site.yml`        | Everything except hardening; `harden.yml` is separate on purpose (A4)                         |
+| `ansible/roles/`          | `common` `docker` `postgres` `caddy` `deploy` `backup` `hardening`                            |
