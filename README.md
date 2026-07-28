@@ -17,7 +17,8 @@ this host.
 
 All phases 0–9 were applied and verified on 2026-07-27; [`spec/10-phases.md`](spec/10-phases.md) carries as-executed
 annotations where reality diverged from the plan. The instance serves both projects in production —
-`kenesparta.dev` (blog) and `bot.kenesparta.dev` (budget Telegram bot) — each behind its own CloudFront distribution →
+`kenesparta.dev` (blog) and `api.kenesparta.dev` (budget API, backend of the iOS app; through rev 2.5 it was the
+budget Telegram bot at `bot.kenesparta.dev`) — each behind its own CloudFront distribution →
 Caddy (Let's Encrypt) → container, with the data restored into the host Postgres.
 
 The old estate is gone: the Lightsail Container Service, the ECR repositories, the managed PostgreSQL and the old
@@ -108,6 +109,12 @@ Route 53 zones, their DNSSEC keys, and the KMS keys (G10).
 `make state/seed` and `make plan/phase0` are historical. The Phase 0 state-copy gate passed on 2026-07-27, and since
 the Phase 6 origin swap it can no longer report clean — the target now prints a notice saying exactly that. Resource
 addresses were preserved by copying the state object, which is why there are no `import` blocks anywhere in this repo.
+
+Host snapshots are **weekly**: Sundays 06:00 UTC an EventBridge rule fires the `kenesparta-host-weekly-snapshot`
+Lambda, which creates `kenesparta-host-weekly-<date>` and prunes to the newest four by name prefix (spec §5.8). The
+daily AutoSnapshot add-on is disabled — it cannot do weekly — and what the Lambda makes are *manual* snapshots, which
+never expire on their own; the prune is the only thing bounding their cost, and it never touches names outside the
+prefix, so `pre-harden-*`-style snapshots are safe (G20).
 
 `terraform/.terraform.lock.hcl` **is committed** — deliberately. Provider determinism is what kept the migration's
 zero-diff gate honest, and it still matters: `carlpett/sops` is constrained only to `~> 1.2`, and the lock file is the
@@ -336,6 +343,7 @@ key of every committed version, and `secrets/rotate` (a *new* data key) is what 
 | `terraform/main.tf`       | The instance, static IP, firewall, snapshots                                                  |
 | `terraform/cloudfront.tf` | Per-project distributions and the origin-secret header                                        |
 | `terraform/static-cdn.tf` | `cdn.kenesparta.dev` — bucket, distribution, the split cache policies (G19)                   |
+| `terraform/snapshot-weekly.tf` | Sunday snapshot Lambda + EventBridge rule; the add-on is disabled (G20)                  |
 | `terraform/storage.tf`    | The backup bucket — its access key deliberately not in state                                  |
 | `ansible/site.yml`        | Everything except hardening; `harden.yml` is separate on purpose (A4)                         |
 | `ansible/roles/`          | `common` `docker` `postgres` `caddy` `deploy` `backup` `hardening`                            |

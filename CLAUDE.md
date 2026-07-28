@@ -5,7 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Current state
 
 **The migration is complete — all phases 0–9 (2026-07-27).** The instance serves both projects in production:
-`kenesparta.dev` (blog) and `bot.kenesparta.dev` (budget Telegram bot), each behind its own CloudFront distribution →
+`kenesparta.dev` (blog) and `api.kenesparta.dev` (budget API — backend of the iOS app; formerly the budget Telegram
+bot at `bot.kenesparta.dev`, rev ≤2.5), each behind its own CloudFront distribution →
 Caddy (Let's Encrypt) → container, with data restored into the host Postgres. The old estates are gone: the container
 services, ECR repositories, managed database, `../kenesparta.dev/tf` and `../budget-assistant/deploy/tf` are all
 destroyed or deleted; this repository's state (`s3://tf.kenesparta.dev/infra/prod/terraform.tfstate`) is the account's
@@ -130,6 +131,12 @@ Failure modes that are not obvious from any single file (`spec/12-gotchas.md`):
 - **Let's Encrypt limits are per registered domain.** The `origin-*` names share `kenesparta.dev`'s 50-cert weekly
   budget with everything else. Caddy's `/data` volume must persist across container recreation, and `.dev` is
   HSTS-preloaded so a TLS error makes the site unreachable rather than degraded — iterate against LE staging.
+- **Host snapshots are weekly manual snapshots that never expire on their own** (G20). The AutoSnapshot add-on is
+  disabled — it is daily-only, with fixed seven-copy retention — and an EventBridge rule fires the
+  `kenesparta-host-weekly-snapshot` Lambda Sundays 06:00 UTC, which creates `kenesparta-host-weekly-<date>` and prunes
+  to the newest four *by name prefix*. Renaming the prefix orphans every existing weekly snapshot (billed until
+  hand-deleted); names outside it (`pre-harden-*`) are never touched; and a broken Lambda stops snapshot *creation*
+  silently — there is no alarm at this scale.
 - **The CDN's `immutable` header cannot be taken back** (G19). On `cdn.kenesparta.dev`, `fonts/*` and `blog/*` carry
   `Cache-Control: public, max-age=31536000, immutable` — a browser that holds an object keeps it for a year and no
   CloudFront invalidation can reach it, so changing an asset there means renaming it. Stable-name objects overwritten

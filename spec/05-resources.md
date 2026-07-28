@@ -56,12 +56,21 @@ Two optional fields extend an entry (added in rev 2.3, for `budget`):
 - `env` — a map of **non-secret** environment variables written verbatim into the project's `.env`. Secret values
   belong in `vault_project_env.<name>` (spec §9.4), which the deploy role merges in; nothing secret goes in this file.
 - `origin_gate_env` — the name of an env var to fill with `vault_origin_secret`, for applications that verify the
-  `X-Origin-Verify` header themselves in addition to Caddy's gate (the budget bot's `ORIGIN_SECRET`). One source,
+  `X-Origin-Verify` header themselves in addition to Caddy's gate (the budget API's `ORIGIN_SECRET`). One source,
   no second copy to rotate (G13).
 
 Each **non-blog** project gets its own CloudFront distribution and `hostname` alias records generated from this file
 (blog keeps the migrated singleton distribution in `cloudfront.tf`). All of them ride the wildcard ACM certificate —
 `hostname` must stay within `*.kenesparta.dev` (or the apex).
+
+*Amended in rev 2.6:* the `budget` project is the **authenticated JSON API** (`api.kenesparta.dev`) backing the iOS
+budget app; through rev 2.5 it was the private Telegram bot at `bot.kenesparta.dev`. The hostname swap is only a
+CloudFront alias + Route 53 change — the distribution already forwards `Authorization` (AllViewerExceptHostHeader)
+with caching disabled, so no behavior change was needed. Its `origin` stays `origin-bot.kenesparta.dev` **on
+purpose**: the origin name is invisible to users, and renaming it would force a new Caddy vhost and a new Let's
+Encrypt certificate against the shared rate budget (G8). App-side auth is per-user bearer tokens hashed in the
+app's own database; the only vault change was swapping the Telegram secrets in `vault_project_env.budget` for
+`CREDENCIALES_API` (§9.4 shape is unchanged).
 
 ## 5.4 Instance configuration
 
@@ -77,10 +86,15 @@ resource "aws_lightsail_instance" "app" {
   add_on {
     type          = "AutoSnapshot"
     snapshot_time = "06:00"
-    status        = "Enabled"
+    status        = "Disabled" # rev 2.5 — weekly cadence instead, see §5.8
   }
 }
 ```
+
+*Amended in rev 2.5:* the add-on is **disabled**. It is daily-only — its schedule takes a time of day and nothing
+else, and its retention is fixed at the seven most recent — so the weekly Sunday cadence lives outside it, in §5.8.
+The block stays in the resource (with `snapshot_time` still set, which the block requires) so re-enabling is a
+one-word change.
 
 Verify blueprint and bundle IDs before applying — they change over time:
 
@@ -141,3 +155,27 @@ whole-bucket read/write with no way to narrow it to a prefix. **It also requires
 role — see G16**, without which every container can read the same credentials.
 
 Lightsail buckets have no lifecycle rules, so retention is the backup script's job — see [§9.2](09-ansible.md).
+
+## 5.8 Weekly snapshots (rev 2.5)
+
+The AutoSnapshot add-on cannot do weekly (§5.4), so snapshots are driven from the AWS side — where credentials exist
+without putting any on the host (G5):
+
+```
+EventBridge rule  cron(0 6 ? * SUN *)          # Sundays 06:00 UTC = 01:00 GMT-5, the old daily hour
+  → Lambda <instance>-weekly-snapshot          # terraform/lambda/weekly_snapshot.py
+      CreateInstanceSnapshot <instance>-weekly-<YYYY-MM-DD>
+      then delete all but the newest KEEP whose names start with `<instance>-weekly-`
+```
+
+- The snapshots it creates are **manual** snapshots — nothing in Lightsail expires them; the prune step is the only
+  bound on their cost (G20).
+- The prune filters strictly by the `<instance>-weekly-` prefix, so hand-made snapshots (`pre-harden-*`, future
+  pre-change snapshots) are never candidates.
+- Retention is the Lambda's `KEEP` env var — 4, about a month. Snapshots are incremental, so four weeklies cost
+  roughly what seven dailies did; this is a cadence change more than a cost change (§14).
+- The Lambda's role holds exactly `lightsail:CreateInstanceSnapshot`, `lightsail:GetInstanceSnapshots`,
+  `lightsail:DeleteInstanceSnapshot` and CloudWatch Logs writes. Lightsail actions largely ignore resource-level
+  ARNs, so the real scoping — the name prefix — lives in the code.
+- Failure mode: if the Lambda breaks, snapshots stop being *created*, not just pruned. There is no alarm at this
+  scale — glance at `aws lightsail get-instance-snapshots` when in doubt.

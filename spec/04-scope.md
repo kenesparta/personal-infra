@@ -21,7 +21,9 @@
 
 - SSH key pair (from `~/.ssh/personal-infra.pub`)
 - Lightsail instance (bundle, blueprint, availability zone), static IP and attachment
-- Instance firewall rules, automatic snapshot add-on
+- Instance firewall rules; the AutoSnapshot add-on — present but **disabled** since rev 2.5, because it is daily-only:
+  snapshots are weekly (Sundays 06:00 UTC) via an EventBridge rule → Lambda that creates them and prunes to the newest
+  four (§5.8, G20)
 - `origin-<project>.kenesparta.dev` A records
 - Per-project CloudFront distributions with the origin secret header
 - Lightsail bucket for database backups, and the instance→bucket resource access that replaces its access key (G5)

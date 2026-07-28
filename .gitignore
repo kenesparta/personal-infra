@@ -11,6 +11,9 @@
 terraform/.env
 terraform/terraform.tfvars
 
+# Built by the archive provider from lambda/*.py (spec §5.8)
+terraform/lambda/*.zip
+
 # Ansible: inventory is generated from `terraform output` by `make inventory`
 ansible/inventory/hosts.ini
 *.retry

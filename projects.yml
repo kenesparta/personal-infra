@@ -27,12 +27,14 @@ projects:
       LEPTOS_SITE_ADDR: "0.0.0.0:3000"
       RUST_LOG: info
 
-  # Private Telegram bot (spec §5.3 rev 2.3). Secret env (bot token, Gemini
-  # key, allowlist) lives in vault_project_env.budget; ORIGIN_SECRET is filled
-  # from vault_origin_secret via origin_gate_env — the app checks the same
-  # X-Origin-Verify header Caddy does.
+  # Budget API — backend of the iOS app (spec §5.3 rev 2.6; formerly the
+  # Telegram bot, rev ≤2.5). Secret env (Gemini key, CREDENCIALES_API) lives in
+  # vault_project_env.budget; ORIGIN_SECRET is filled from vault_origin_secret
+  # via origin_gate_env — the app checks the same X-Origin-Verify header Caddy
+  # does. `origin` keeps its old name on purpose: renaming it would burn a new
+  # Let's Encrypt cert (G8) for a name no user ever sees.
   - name: budget
-    hostname: bot.kenesparta.dev
+    hostname: api.kenesparta.dev
     origin: origin-bot.kenesparta.dev
     image: ghcr.io/kenesparta/budget-bot
     port: 8080

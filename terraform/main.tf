@@ -25,10 +25,13 @@ resource "aws_lightsail_instance" "app" {
   # Ansible's job (AD-7). Treat any plan showing replacement here as data loss.
   user_data = file("${path.module}/bootstrap.sh")
 
+  # Daily-only by design — frequency is not configurable — so this stays
+  # DISABLED and snapshot-weekly.tf owns the Sunday cadence (spec §5.8).
+  # snapshot_time is required by the block even while disabled.
   add_on {
     type          = "AutoSnapshot"
     snapshot_time = "06:00" # UTC
-    status        = "Enabled"
+    status        = "Disabled"
   }
 
   tags = merge(

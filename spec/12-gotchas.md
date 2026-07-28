@@ -163,3 +163,15 @@ overwritten in place, at one hour. Two sharp edges: response-headers policies ap
 requesting a not-yet-uploaded asset under an immutable path pins the 403 as well — upload assets *before* publishing
 references to them; and per-object metadata is honoured only on the default behavior, because the immutable policy
 overrides it.
+
+**G20 — Weekly snapshots are *manual* snapshots, and manual snapshots never expire.** (rev 2.5) The AutoSnapshot
+add-on is daily-only — neither its frequency nor its seven-copy retention is configurable — so the weekly Sunday
+schedule is an EventBridge rule invoking a Lambda (§5.8) that calls `CreateInstanceSnapshot` and then prunes. What it
+creates are ordinary manual snapshots: nothing in Lightsail ever deletes one, so the Lambda's prune — scoped to names
+starting with `<instance>-weekly-` — is the only thing bounding their cost. Consequences: renaming the prefix orphans
+every existing weekly snapshot, which then bills forever until deleted by hand; snapshots outside the prefix
+(`pre-harden-*` and other hand-made ones) are deliberately never candidates; and a broken Lambda means snapshots stop
+being *created*, not just pruned — there is no alarm at this scale, so check `aws lightsail get-instance-snapshots`
+when in doubt. Note the add-on's own stored dailies do not linger under the weekly regime: any that remain after
+disabling it are deleted by hand at cutover, so the restore points that persist are the weeklies and the hand-made
+manual snapshots.

@@ -15,6 +15,12 @@ terraform {
       source  = "carlpett/sops"
       version = "~> 1.2"
     }
+    # Zips the weekly-snapshot Lambda (spec §5.8). Like sops, actually pinned
+    # by the committed lock file.
+    archive = {
+      source  = "hashicorp/archive"
+      version = "~> 2.7"
+    }
   }
 
   # Seeded by copying the old state object (AD-9), NOT by import blocks:
