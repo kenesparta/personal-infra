@@ -240,7 +240,7 @@ never created, it is minted out of band because `aws_iam_access_key` would put t
 - *Blocking mode (the driver default)* — couples application stdout to CloudWatch availability; an outage there must
   drop log lines, not stall the app (G21).
 
-## AD-12 — Viewer IP and geolocation reach the applications as edge-injected headers (rev 2.8)
+## AD-12 — Viewer IP and geolocation reach the applications as edge-injected headers (rev 2.8, amended 2.9)
 
 **Chosen:** the applications log who reads what — viewer IP plus country/region/city — as fields in their own
 CloudWatch-bound JSON events (AD-11). Both facts exist only at the edge, so the edge delivers them as headers, through
@@ -250,10 +250,17 @@ two mechanisms attached to **every** distribution:
   add-true-client-ip-header pattern) that sets `true-client-ip` from `event.viewer.ip`. Assigning unconditionally
   makes it spoof-proof — a client-sent value never survives — and because the function edits the *viewer* request,
   the untouched `Managed-AllViewerExceptHostHeader` origin request policy forwards it like any other viewer header.
-- a **custom cache policy** (`kenesparta-caching-disabled-plus-geo`) that keeps `Managed-CachingDisabled` semantics
-  (all TTLs 0, no accept-encoding normalization) and whitelists `CloudFront-Viewer-Country`,
-  `CloudFront-Viewer-Country-Region-Name` and `CloudFront-Viewer-City` — cache-key values are automatically included
-  in origin requests, which is the only way to carry CloudFront-generated headers without touching the ORP.
+- a **custom cache policy** (`kenesparta-caching-disabled-plus-geo`) that keeps near-`Managed-CachingDisabled`
+  semantics (`min_ttl = 0`, `default_ttl = 0`, `max_ttl = 1`, no accept-encoding normalization) and whitelists
+  `CloudFront-Viewer-Country`, `CloudFront-Viewer-Country-Region-Name` and `CloudFront-Viewer-City` — cache-key
+  values are automatically included in origin requests, which is the only way to carry CloudFront-generated headers
+  without touching the ORP. `max_ttl` is 1, not 0, because `CreateCachePolicy` rejects any header whitelist once all
+  three TTLs are 0 (`InvalidArgument`, hit on first apply 2026-08-01 — the §5.10 fallback, now enacted; rev 2.9).
+  Nothing is cached unless the origin volunteers a `Cache-Control`, and then for at most one second. Because caching
+  is now formally enabled rather than disabled, `Authorization` and all query strings ride the cache key too:
+  in-key, `Authorization` is guaranteed into origin requests regardless of CloudFront's special GET/HEAD handling of
+  that header, and any one-second cache entry is keyed on the exact request (path + query + token + geo), so entries
+  can never collide across queries or bearers.
 
 Caddy needs no change (`reverse_proxy` passes unrecognized request headers through), and apps that ignore the headers
 are unaffected. Cost: zero — CloudFront Functions are inside the 2M/month always-free tier at this traffic, and cache
@@ -278,3 +285,8 @@ why the IP needs the function at all.
   fresh, plus resident memory against AD-1, to recompute what the edge already knows.
 - *CloudFront standard or real-time logs* — a second, disjoint pipeline (S3 or Kinesis, plus delivery cost) whose
   rows cannot be joined with the applications' own events; the point of AD-11 is one queryable stream per project.
+- *Carrying geo through the function too* (copy `cloudfront-viewer-*` out of the viewer-request event, keep the
+  managed `CachingDisabled` policy) — the geo headers are only documented to appear in a function's event when a
+  cache policy or ORP references them, which is the same circularity, and a silent-absence failure mode if the
+  `allExcept` ORP doesn't count as "all viewer headers". Only `event.viewer.ip` is unconditionally present, which is
+  why the function carries the IP and nothing else (rev 2.9).

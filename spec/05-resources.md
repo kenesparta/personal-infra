@@ -205,7 +205,7 @@ hand-copied between the stages like `backup_bucket`, because Ansible does not re
 wrong here. `docker logs` keeps working through Docker's dual-logging cache. Caddy and Postgres stay on the daemon's
 `json-file` default; only project containers ship.
 
-## 5.10 Edge telemetry headers (rev 2.8)
+## 5.10 Edge telemetry headers (rev 2.8, amended 2.9)
 
 AD-12: every distribution injects the viewer's IP and geolocation as headers so the applications can log them
 (§5.9 ships the logs). Two resources in `cloudfront.tf`, attached to the default cache behavior of the blog
@@ -221,9 +221,11 @@ resource "aws_cloudfront_function" "true_client_ip" {
 
 resource "aws_cloudfront_cache_policy" "disabled_plus_geo" {
   name = "kenesparta-caching-disabled-plus-geo"
-  # Managed-CachingDisabled semantics: all TTLs 0, accept-encoding flags off.
-  # Whitelisted headers ride the cache key only to be forwarded to the origin:
-  # CloudFront-Viewer-Country, -Country-Region-Name, -City.
+  # Near-CachingDisabled: min/default TTL 0, max_ttl 1, accept-encoding flags
+  # off. Whitelisted headers ride the cache key only to be forwarded to the
+  # origin: CloudFront-Viewer-Country, -Country-Region-Name, -City, plus
+  # Authorization; query strings all. See the caveats below for why max_ttl
+  # is 1 and why Authorization/query strings are in the key.
 }
 ```
 
@@ -233,7 +235,21 @@ load-bearing — AD-8) and swaps `cache_policy_id` from the managed `CachingDisa
 
 Caveats: CloudFront percent-encodes non-ASCII header values (RFC 3986) — consumers decode; city/region resolution is
 best-effort (some IPs only geolocate to a country) and the `-Country-Region-Name` family is not applied to requests
-originating from the AWS network, so applications must treat every geo field as optional. If a future
-`terraform apply` rejects the TTL-0 + whitelist combination (the console UI does not offer it; the API accepts it),
-the fallback is `max_ttl = 1` with `default_ttl = 0` — nothing is cached either way without a `Cache-Control` from
-the origin.
+originating from the AWS network, so applications must treat every geo field as optional.
+
+**As applied (2026-08-01, rev 2.9):** the TTL-0 + whitelist combination this section originally specified is
+rejected by the API after all (`CreateCachePolicy` → `InvalidArgument: The parameter HeaderBehavior is invalid for
+policy with caching disabled`), so the anticipated fallback is the config: `min_ttl = 0`, `default_ttl = 0`,
+`max_ttl = 1`. Nothing is cached unless the origin volunteers a `Cache-Control`, and then for at most one second.
+Because that formally *enables* caching, two hardenings ride along: `Authorization` joins the header whitelist —
+in-key it is guaranteed into origin requests, sidestepping CloudFront's special GET/HEAD treatment of that header on
+caching-enabled behaviors, which would otherwise threaten the budget API's bearer auth — and query strings switch to
+`all`, so a one-second entry is keyed on the exact request rather than shared geo-wide. Cookies stay out of the key
+(the ORP still forwards them): a response that is simultaneously public-cacheable and cookie-varying could collide
+within that second, and no current origin emits one — revisit if one ever does.
+
+Observed after deploy (Caddy access log, 2026-08-01): referencing any `CloudFront-Viewer-*` header in the cache
+policy makes CloudFront inject the *whole* header family into the viewer request, and the all-except-Host ORP then
+forwards every one of them — the origin also sees `-Address`, `-ASN`, `-Latitude`/`-Longitude`, `-Time-Zone`,
+`-Country-Name` and the device-type family, not just the three whitelisted names. Undocumented enrichment, not
+contract: applications may only rely on the whitelisted three plus `true-client-ip`.

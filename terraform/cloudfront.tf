@@ -28,19 +28,27 @@ resource "aws_route53_record" "origin" {
 # The applications log who reads what (IP + geolocation) into CloudWatch
 # (AD-11); both facts only exist at the edge, delivered as headers.
 
-# Managed-CachingDisabled semantics (all TTLs 0) plus the geo headers.
-# A cache policy, not the origin request policy, because cache-key values are
-# automatically included in origin requests and the ORP cannot whitelist
-# CloudFront-* headers without also forwarding the viewer's Host, which would
-# break Caddy's per-project vhost routing (AD-8). CloudFront-Viewer-Address /
-# -ASN are rejected in cache policies — the viewer IP travels via the
-# true-client-ip function below instead.
+# Near-CachingDisabled semantics plus the geo headers. A cache policy, not the
+# origin request policy, because cache-key values are automatically included
+# in origin requests and the ORP cannot whitelist CloudFront-* headers without
+# also forwarding the viewer's Host, which would break Caddy's per-project
+# vhost routing (AD-8). CloudFront-Viewer-Address / -ASN are rejected in cache
+# policies — the viewer IP travels via the true-client-ip function below.
+#
+# max_ttl is 1, not 0: CreateCachePolicy rejects any header whitelist once all
+# three TTLs are 0 (spec §5.10 as-applied, 2026-08-01). min/default stay 0, so
+# nothing is cached unless the origin volunteers a Cache-Control — then for at
+# most one second. That formally enables caching, so Authorization rides the
+# key (in-key it is guaranteed into origin requests, sidestepping CloudFront's
+# special GET/HEAD treatment of it on caching-enabled behaviors) and query
+# strings ride too (a one-second entry is keyed on the exact request, never
+# shared geo-wide). Cookies stay out of the key; the ORP still forwards them.
 resource "aws_cloudfront_cache_policy" "disabled_plus_geo" {
   name        = "kenesparta-caching-disabled-plus-geo"
-  comment     = "CachingDisabled semantics + CloudFront geo headers to the origin (AD-12)"
+  comment     = "CachingDisabled semantics + geo headers + Authorization to the origin (AD-12)"
   min_ttl     = 0
   default_ttl = 0
-  max_ttl     = 0
+  max_ttl     = 1
 
   parameters_in_cache_key_and_forwarded_to_origin {
     enable_accept_encoding_gzip   = false
@@ -50,6 +58,7 @@ resource "aws_cloudfront_cache_policy" "disabled_plus_geo" {
       header_behavior = "whitelist"
       headers {
         items = [
+          "Authorization",
           "CloudFront-Viewer-Country",
           "CloudFront-Viewer-Country-Region-Name",
           "CloudFront-Viewer-City",
@@ -62,7 +71,7 @@ resource "aws_cloudfront_cache_policy" "disabled_plus_geo" {
     }
 
     query_strings_config {
-      query_string_behavior = "none"
+      query_string_behavior = "all"
     }
   }
 }
