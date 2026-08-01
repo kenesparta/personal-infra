@@ -24,8 +24,58 @@ resource "aws_route53_record" "origin" {
   records = [aws_lightsail_static_ip.app.ip_address]
 }
 
-data "aws_cloudfront_cache_policy" "caching_disabled" {
-  name = "Managed-CachingDisabled"
+# ── Edge telemetry headers (AD-12, spec §5.10) ───────────────────────────────
+# The applications log who reads what (IP + geolocation) into CloudWatch
+# (AD-11); both facts only exist at the edge, delivered as headers.
+
+# Managed-CachingDisabled semantics (all TTLs 0) plus the geo headers.
+# A cache policy, not the origin request policy, because cache-key values are
+# automatically included in origin requests and the ORP cannot whitelist
+# CloudFront-* headers without also forwarding the viewer's Host, which would
+# break Caddy's per-project vhost routing (AD-8). CloudFront-Viewer-Address /
+# -ASN are rejected in cache policies — the viewer IP travels via the
+# true-client-ip function below instead.
+resource "aws_cloudfront_cache_policy" "disabled_plus_geo" {
+  name        = "kenesparta-caching-disabled-plus-geo"
+  comment     = "CachingDisabled semantics + CloudFront geo headers to the origin (AD-12)"
+  min_ttl     = 0
+  default_ttl = 0
+  max_ttl     = 0
+
+  parameters_in_cache_key_and_forwarded_to_origin {
+    enable_accept_encoding_gzip   = false
+    enable_accept_encoding_brotli = false
+
+    headers_config {
+      header_behavior = "whitelist"
+      headers {
+        items = [
+          "CloudFront-Viewer-Country",
+          "CloudFront-Viewer-Country-Region-Name",
+          "CloudFront-Viewer-City",
+        ]
+      }
+    }
+
+    cookies_config {
+      cookie_behavior = "none"
+    }
+
+    query_strings_config {
+      query_string_behavior = "none"
+    }
+  }
+}
+
+# The viewer IP as an ordinary (spoof-proof: overwritten) viewer header —
+# AWS's documented add-true-client-ip-header pattern. Free at this volume
+# (2M invocations/month always-free tier).
+resource "aws_cloudfront_function" "true_client_ip" {
+  name    = "kenesparta-true-client-ip"
+  runtime = "cloudfront-js-2.0"
+  comment = "Injects true-client-ip so the origin sees the viewer IP (AD-12)"
+  publish = true
+  code    = file("${path.module}/true-client-ip.js")
 }
 
 # Forwards all viewer headers/cookies/query strings to the origin EXCEPT Host,
@@ -66,9 +116,14 @@ resource "aws_cloudfront_distribution" "app" {
     viewer_protocol_policy   = "redirect-to-https"
     allowed_methods          = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
     cached_methods           = ["GET", "HEAD"]
-    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
+    cache_policy_id          = aws_cloudfront_cache_policy.disabled_plus_geo.id
     origin_request_policy_id = data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id
     compress                 = true
+
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.true_client_ip.arn
+    }
   }
 
   restrictions {
@@ -152,9 +207,14 @@ resource "aws_cloudfront_distribution" "project" {
     viewer_protocol_policy   = "redirect-to-https"
     allowed_methods          = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
     cached_methods           = ["GET", "HEAD"]
-    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
+    cache_policy_id          = aws_cloudfront_cache_policy.disabled_plus_geo.id
     origin_request_policy_id = data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id
     compress                 = true
+
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.true_client_ip.arn
+    }
   }
 
   restrictions {

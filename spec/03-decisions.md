@@ -239,3 +239,42 @@ never created, it is minted out of band because `aws_iam_access_key` would put t
   Terraform (G21).
 - *Blocking mode (the driver default)* — couples application stdout to CloudWatch availability; an outage there must
   drop log lines, not stall the app (G21).
+
+## AD-12 — Viewer IP and geolocation reach the applications as edge-injected headers (rev 2.8)
+
+**Chosen:** the applications log who reads what — viewer IP plus country/region/city — as fields in their own
+CloudWatch-bound JSON events (AD-11). Both facts exist only at the edge, so the edge delivers them as headers, through
+two mechanisms attached to **every** distribution:
+
+- a viewer-request **CloudFront Function** (`kenesparta-true-client-ip`, AWS's documented
+  add-true-client-ip-header pattern) that sets `true-client-ip` from `event.viewer.ip`. Assigning unconditionally
+  makes it spoof-proof — a client-sent value never survives — and because the function edits the *viewer* request,
+  the untouched `Managed-AllViewerExceptHostHeader` origin request policy forwards it like any other viewer header.
+- a **custom cache policy** (`kenesparta-caching-disabled-plus-geo`) that keeps `Managed-CachingDisabled` semantics
+  (all TTLs 0, no accept-encoding normalization) and whitelists `CloudFront-Viewer-Country`,
+  `CloudFront-Viewer-Country-Region-Name` and `CloudFront-Viewer-City` — cache-key values are automatically included
+  in origin requests, which is the only way to carry CloudFront-generated headers without touching the ORP.
+
+Caddy needs no change (`reverse_proxy` passes unrecognized request headers through), and apps that ignore the headers
+are unaffected. Cost: zero — CloudFront Functions are inside the 2M/month always-free tier at this traffic, and cache
+policies are free.
+
+**Rationale:** the constraint is the Host header. Caddy routes projects by their `origin-*` vhost (AD-8), so the ORP
+must keep excluding the viewer's `Host` — and no ORP header behavior combines "all viewer headers except Host" with
+CloudFront-generated headers. Splitting the concern (IP via function, geo via cache policy) is the only shape that
+leaves both the ORP and Caddy untouched. `CloudFront-Viewer-Address`/`-ASN` are rejected in cache policies, which is
+why the IP needs the function at all.
+
+**Rejected:**
+
+- *Swapping the ORP to `allViewerAndWhitelistCloudFront`* — forwards the viewer's `Host` (`kenesparta.dev`), which no
+  Caddy vhost matches; every request through every distribution breaks at once (AD-8).
+- *A `whitelist` ORP naming viewer + CloudFront headers* — anything unlisted is dropped; enumerating what SSR and
+  server-function POSTs need (`Content-Type`, `Accept`, cookies, …) fails silently the day a new header matters.
+- *Deriving the IP from `X-Forwarded-For`* — Caddy only honors XFF from `trusted_proxies`, which would mean
+  maintaining CloudFront's ever-changing IP ranges on the host — the same moving allowlist already rejected at the
+  firewall (G11) — and the leading XFF entries are client-controlled anyway.
+- *GeoIP lookup inside the applications* (MaxMind) — a licensed database shipped into distroless images and kept
+  fresh, plus resident memory against AD-1, to recompute what the edge already knows.
+- *CloudFront standard or real-time logs* — a second, disjoint pipeline (S3 or Kinesis, plus delivery cost) whose
+  rows cannot be joined with the applications' own events; the point of AD-11 is one queryable stream per project.

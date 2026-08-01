@@ -204,3 +204,36 @@ hand-copied between the stages like `backup_bucket`, because Ansible does not re
 `awslogs-stream` named after the container, and `mode: non-blocking` with a 4 MB buffer — G21 explains why blocking is
 wrong here. `docker logs` keeps working through Docker's dual-logging cache. Caddy and Postgres stay on the daemon's
 `json-file` default; only project containers ship.
+
+## 5.10 Edge telemetry headers (rev 2.8)
+
+AD-12: every distribution injects the viewer's IP and geolocation as headers so the applications can log them
+(§5.9 ships the logs). Two resources in `cloudfront.tf`, attached to the default cache behavior of the blog
+singleton and every per-project distribution alike:
+
+```hcl
+resource "aws_cloudfront_function" "true_client_ip" {
+  name    = "kenesparta-true-client-ip"
+  runtime = "cloudfront-js-2.0"
+  publish = true
+  code    = file("${path.module}/true-client-ip.js") # sets true-client-ip from event.viewer.ip
+}
+
+resource "aws_cloudfront_cache_policy" "disabled_plus_geo" {
+  name = "kenesparta-caching-disabled-plus-geo"
+  # Managed-CachingDisabled semantics: all TTLs 0, accept-encoding flags off.
+  # Whitelisted headers ride the cache key only to be forwarded to the origin:
+  # CloudFront-Viewer-Country, -Country-Region-Name, -City.
+}
+```
+
+The behavior keeps `Managed-AllViewerExceptHostHeader` as its origin request policy (the Host exclusion is
+load-bearing — AD-8) and swaps `cache_policy_id` from the managed `CachingDisabled` to the custom policy, plus a
+`function_association { event_type = "viewer-request" }`.
+
+Caveats: CloudFront percent-encodes non-ASCII header values (RFC 3986) — consumers decode; city/region resolution is
+best-effort (some IPs only geolocate to a country) and the `-Country-Region-Name` family is not applied to requests
+originating from the AWS network, so applications must treat every geo field as optional. If a future
+`terraform apply` rejects the TTL-0 + whitelist combination (the console UI does not offer it; the API accepts it),
+the fallback is `max_ttl = 1` with `default_ttl = 0` — nothing is cached either way without a `Cache-Control` from
+the origin.
