@@ -60,6 +60,8 @@
           - vault_origin_secret is defined and vault_origin_secret | length > 0
           - vault_ghcr_token is defined and vault_ghcr_token | length > 0
           - vault_postgres_superuser_password is defined and vault_postgres_superuser_password | length > 0
+          - vault_cloudwatch_access_key_id is defined and vault_cloudwatch_access_key_id | length > 0
+          - vault_cloudwatch_secret_access_key is defined and vault_cloudwatch_secret_access_key | length > 0
         fail_msg: >-
           group_vars/vault.yml is missing, empty, or not being decrypted.
           Create it with `make vault/create` (template: vault.yml.example),

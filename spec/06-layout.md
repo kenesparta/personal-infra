@@ -24,7 +24,11 @@ personal-infra/
 │   ├── iam.tf                   # OIDC provider + CI role
 │   ├── legacy.tf                # container service + ECR — DELETED in Phase 7
 │   ├── storage.tf               # backup bucket (Phase 3)
+│   ├── snapshot-weekly.tf       # EventBridge + Lambda weekly snapshots (§5.8)
+│   ├── lambda/                  # weekly_snapshot.py + its generated zip
+│   ├── cloudwatch-logs.tf       # log groups + logs-writer IAM user (§5.9)
 │   ├── outputs.tf
+│   ├── outputs-phase1.tf        # outputs referencing Phase 1+ resources
 │   ├── bootstrap.sh             # user_data — minimal, see G4
 │   ├── .env                     # gitignored — SSO profile
 │   ├── terraform.tfvars         # gitignored

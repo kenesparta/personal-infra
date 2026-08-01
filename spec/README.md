@@ -14,7 +14,7 @@ source of truth — see [§1](01-purpose.md): if implementation needs something 
 |----|--------------------------------------------|----------------------------------------------------------------|
 | 1  | [Purpose](01-purpose.md)                   | What is being built, and what is being migrated in             |
 | 2  | [Constraints](02-constraints.md)           | C1–C10 — fixed inputs, not preferences                          |
-| 3  | [Architecture Decisions](03-decisions.md)  | AD-1–AD-10 — what was chosen *and what was rejected*            |
+| 3  | [Architecture Decisions](03-decisions.md)  | AD-1–AD-11 — what was chosen *and what was rejected*            |
 | 4  | [Scope Boundary](04-scope.md)              | Terraform-managed / Ansible-managed / neither                   |
 | 5  | [Resource Specification](05-resources.md)  | Providers, backend, `projects.yml`, instance, firewall, DNS     |
 | 6  | [Repository Layout](06-layout.md)          | File tree, and why it is flat                                   |
@@ -23,7 +23,7 @@ source of truth — see [§1](01-purpose.md): if implementation needs something 
 | 9  | [Ansible Specification](09-ansible.md)     | Inventory handoff, the seven roles, A1–A6 conventions            |
 | 10 | [Migration Phases](10-phases.md)           | Phase 0–9, in order, each with its verification gate             |
 | 11 | [Acceptance Criteria](11-acceptance.md)    | The 14 checks that define "done"                                 |
-| 12 | [Gotchas](12-gotchas.md)                   | G1–G20 — failure modes not obvious from any single file          |
+| 12 | [Gotchas](12-gotchas.md)                   | G1–G21 — failure modes not obvious from any single file          |
 | 13 | [Out of Scope](13-out-of-scope.md)         | Deferred, with the trigger to reconsider each                    |
 | 14 | [Cost Model](14-cost.md)                   | Current vs target monthly spend                                  |
 

@@ -55,6 +55,28 @@
     validate: dockerd --validate --config-file %s
   notify: Restart docker
 
+- name: Create the Docker service drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/docker.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the CloudWatch credential drop-in for the awslogs driver
+  # AD-11 — the driver runs inside dockerd, and the instance's metadata
+  # credentials cover only the backup bucket (G5), so the daemon takes the
+  # logs-writer key from its environment. The host's only static AWS
+  # credential; root-only, and containers cannot read it (G21).
+  ansible.builtin.template:
+    src: awslogs-credentials.conf.j2
+    dest: /etc/systemd/system/docker.service.d/awslogs-credentials.conf
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart docker
+
 - name: Enable Docker
   ansible.builtin.systemd_service:
     name: docker

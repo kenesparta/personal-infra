@@ -150,13 +150,16 @@ Failure modes that are not obvious from any single file (`spec/12-gotchas.md`):
   It runs **only** with the G18 tailoring file: the stock profile's host-firewall chapter flushes Docker's chains and
   the metadata guard, re-enables `nftables.service`, and zeroes `ip_forward` — applied bare in Phase 8, it took
   container networking down until repaired.
-- **Secrets:** Postgres passwords, the GHCR PAT and the origin secret live in `ansible/group_vars/vault.yml`
+- **Secrets:** Postgres passwords, the GHCR PAT, the CloudWatch logs key and the origin secret live in `ansible/group_vars/vault.yml`
   (ansible-vault); `vault.yml.example` is the committed, key-names-only template. This repo *also* uses **sops + age**
   for `secrets/prod.enc.env`, read by Terraform — two different mechanisms, do not conflate them.
-- **There is no AWS credential on the host.** G5's old claim that *any* AWS access needs a key on disk was wrong for
-  Lightsail buckets: `aws_lightsail_bucket_resource_access` attaches the instance to the backup bucket and the AWS CLI
-  takes short-lived credentials from instance metadata. It does **not** generalise to other services, so AD-10 (GHCR
-  over ECR) still stands — there is no such attachment for ECR.
+- **Exactly one static AWS credential exists on the host** (AD-11, G21): the CloudWatch logs-writer key, scoped to
+  `logs:CreateLogStream`/`PutLogEvents` on `/kenesparta/*`, held in Ansible Vault and deployed as a root-only dockerd
+  drop-in. It is minted out of band — never `aws_iam_access_key`, whose secret half would sit in state (G5). Everything
+  else still holds: the backup path uses bucket resource access via instance metadata, which does **not** generalise to
+  other services, so AD-10 (GHCR over ECR) stands. The writer deliberately cannot create log groups — they are
+  Terraform's, with 7-day retention — so a container whose group is missing **fails to start**: apply Terraform before
+  `make configure`, and never delete a `/kenesparta/*` group while a container references it.
 - **Never remove `imds-guard.service`** while resource access is in place (G16). Metadata is reachable from any
   container on a Docker bridge, so that one nftables DROP is the only thing stopping an application container from
   reading every project's database dumps out of the backup bucket. It is a **native nftables table of its own**

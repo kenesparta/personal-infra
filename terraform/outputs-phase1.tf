@@ -28,5 +28,10 @@ output "cdn_domain" {
   description = "cdn.kenesparta.dev distribution. Unchanged by the migration, but not previously exported."
 }
 
+output "logs_writer_user" {
+  value       = aws_iam_user.logs_writer.name
+  description = "IAM user whose access key is minted OUT OF BAND for the awslogs driver — never by Terraform (spec §5.9, G21)."
+}
+
 # No secret is ever an output — the CloudFront origin secret in particular
 # (spec §8).

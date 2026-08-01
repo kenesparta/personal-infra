@@ -7,13 +7,14 @@
 | Lightsail managed PostgreSQL       | ~$15.00    | —          |
 | Snapshots (4 weekly, incremental)  | —          | ~$1.20     |
 | Backup bucket (5 GB)               | —          | $1.00      |
+| CloudWatch Logs (7-day retention)  | —          | ~$0.10     |
 | ECR storage (last 10 images)       | ~$1.00     | —          |
 | Route 53 hosted zones (×2)         | $1.00      | $1.00      |
 | KMS keys for DNSSEC (×2)           | $2.00      | $2.00      |
 | CloudFront (app + cdn)             | ~$1.50     | ~$1.50     |
 | S3 (cdn bucket)                    | ~$0.10     | ~$0.10     |
 | Static IP (attached)               | —          | $0.00      |
-| **Total**                          | **~$27.60**| **~$18.80**|
+| **Total**                          | **~$27.60**| **~$18.90**|
 
 The migration now **saves ~$8.50/mo** while adding a shell, self-hosted Postgres, and room for several services —
 retiring the managed database ($15) more than pays for the instance. Headroom against the $50 ceiling: ~$31, which is

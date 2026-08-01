@@ -175,3 +175,24 @@ being *created*, not just pruned — there is no alarm at this scale, so check `
 when in doubt. Note the add-on's own stored dailies do not linger under the weekly regime: any that remain after
 disabling it are deleted by hand at cutover, so the restore points that persist are the weeklies and the hand-made
 manual snapshots.
+
+**G21 — The CloudWatch logs key is the host's only static AWS credential, and the `awslogs` driver has sharp edges.**
+(rev 2.7) The driver runs inside dockerd, which cannot use the instance's metadata credentials — resource access covers
+exactly one bucket (G5) — so AD-11 puts an IAM user's key on the box: Vault → `0600` root-only drop-in
+`/etc/systemd/system/docker.service.d/awslogs-credentials.conf`. Containers cannot read the daemon's environment, so
+G16's guard and threat model are untouched. Things that bite:
+
+- **The writer cannot create log groups** — deliberately, because driver-created groups never expire. A container whose
+  group is missing **fails to start**. Ordering on any change: `terraform apply` (groups) → vault → `make configure`,
+  and never delete a `/kenesparta/*` group while a container references it.
+- **A credential change needs daemon-reload plus a docker restart** — the shared `Restart docker` handler does both, and
+  `live-restore` keeps containers up through it. But a daemon restart does not re-drive logging config: a container
+  keeps the driver settings it was *created* with until it is **recreated** (the deploy role's `docker compose up -d`
+  does that whenever the Compose file changes).
+- **`mode: non-blocking` is load-bearing.** The driver's default blocking mode couples application stdout to CloudWatch
+  availability — an unreachable endpoint stalls the app. Non-blocking drops lines when the 4 MB buffer fills instead;
+  on this box, losing log lines beats losing the service.
+- **`docker logs` still works** (dual-logging cache, Docker ≥ 20.10). Do not "fix" an apparent absence of local logs by
+  re-adding a `json-file` block.
+- **Rotation is one-sided**, unlike the origin secret (G13): mint a second key on the IAM user, splice Vault, run
+  `make configure`, then delete the old key.

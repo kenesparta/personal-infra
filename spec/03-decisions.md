@@ -206,3 +206,36 @@ built-in `GITHUB_TOKEN`, removing AWS from the build job entirely.
 
 **Consequence:** the ECR repository, its lifecycle policy, its Lightsail pull policy, and the CI role's ECR policy are
 all destroyed.
+
+## AD-11 — Container logs ship to CloudWatch Logs via the `awslogs` driver (rev 2.7)
+
+**Chosen:** each project container's stdout/stderr goes to a CloudWatch Logs group `/kenesparta/<name>` —
+Terraform-managed, **7-day retention** — through Docker's native `awslogs` driver, configured per service in the deploy
+role's Compose template (`mode: non-blocking`). The daemon authenticates with a dedicated IAM user
+(`<instance>-logs-writer`) allowed exactly `logs:CreateLogStream` and `logs:PutLogEvents` on those groups; its access
+key is minted **out of band**, lives in Ansible Vault, and reaches dockerd as a root-only systemd drop-in (§5.9, G21).
+Caddy and Postgres stay on the local `json-file` daemon default.
+
+**Rationale:** the driver already lives in the daemon — no agent, no sidecar, nothing new resident against AD-1's RAM
+budget — and logs become durable off-host, tailable and queryable (`aws logs tail`, Logs Insights). Seven days is a
+debugging window, not an archive; at this traffic the cost is cents (§14).
+
+The forcing constraint is credentials. The driver runs *inside dockerd*, and the instance's only native credentials —
+bucket resource access (G5) — cover exactly one Lightsail bucket and nothing else. CloudWatch therefore costs this
+design its first **static** AWS credential on the host. Accepted because the blast radius is writing noise into
+`/kenesparta/*` log streams: the key can create no groups, read nothing, and touch nothing else, and it sits where
+containers cannot reach it (the daemon's environment, not metadata — G16 is unchanged). Like the bucket key that was
+never created, it is minted out of band because `aws_iam_access_key` would put the secret half in state (G5).
+
+**Rejected:**
+
+- *The CloudWatch agent, fluent-bit, or vector* — each is a resident process against a 2 GB budget (AD-1), doing what
+  the daemon does natively.
+- *Instance metadata credentials* — bucket-scoped only (G5); every CloudWatch call is `AccessDenied`.
+- *Host-level shipping to the backup bucket* — the zero-credential alternative (host processes are deliberately outside
+  the metadata guard's scope). Produces an archive, not a queryable/tailable service; revisit if the static key ever
+  becomes unacceptable.
+- *`awslogs-create-group: true`* — needs `logs:CreateLogGroup` and mints never-expiring groups; retention belongs to
+  Terraform (G21).
+- *Blocking mode (the driver default)* — couples application stdout to CloudWatch availability; an outage there must
+  drop log lines, not stall the app (G21).

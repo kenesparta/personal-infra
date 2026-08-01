@@ -1,7 +1,11 @@
 ---
 - name: Restart docker
+  # daemon_reload as well: the awslogs credential drop-in (AD-11) is a
+  # unit-file change, and a restart without a reload would bring the daemon
+  # back up with the old environment. Harmless for daemon.json-only changes.
   ansible.builtin.systemd_service:
     name: docker
+    daemon_reload: true
     state: restarted
 
 - name: Reload systemd for the metadata guard

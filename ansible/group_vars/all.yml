@@ -78,3 +78,14 @@ backup_local_dir: /var/backups/personal-infra
 # Deleting old objects stays a deliberate manual act.
 backup_local_retention_days: 14
 backup_schedule: "03:00"
+
+# ── Container logs → CloudWatch (AD-11) ──────────────────────────────────────
+# The deploy role points each project's awslogs driver at
+# <prefix>/<project name>. Both values must match terraform/cloudwatch-logs.tf
+# (groups are /kenesparta/<name>, 7-day retention, in var.region) — like
+# backup_bucket, copied by hand between the stages, because Ansible does not
+# read Terraform state. The groups must exist BEFORE `make configure`: the
+# writer key cannot create them, and a container whose group is missing fails
+# to start (G21).
+cloudwatch_log_region: us-east-1
+cloudwatch_log_group_prefix: /kenesparta

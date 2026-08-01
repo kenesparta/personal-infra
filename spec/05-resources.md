@@ -179,3 +179,28 @@ EventBridge rule  cron(0 6 ? * SUN *)          # Sundays 06:00 UTC = 01:00 GMT-5
   ARNs, so the real scoping — the name prefix — lives in the code.
 - Failure mode: if the Lambda breaks, snapshots stop being *created*, not just pruned. There is no alarm at this
   scale — glance at `aws lightsail get-instance-snapshots` when in doubt.
+
+## 5.9 Container log shipping (rev 2.7)
+
+Each project container logs to CloudWatch via Docker's `awslogs` driver (AD-11):
+
+```hcl
+resource "aws_cloudwatch_log_group" "project" {
+  for_each          = local.projects
+  name              = "/kenesparta/${each.key}"
+  retention_in_days = 7   # the whole retention story — the driver never creates groups (G21)
+}
+```
+
+plus one IAM user, `<instance>-logs-writer`, whose inline policy allows exactly `logs:CreateLogStream` and
+`logs:PutLogEvents` on those groups and their streams — no `CreateLogGroup`, no reads. **No access key resource
+exists**: the key is minted out of band (`aws iam create-access-key --user-name $(terraform output -raw
+logs_writer_user)`) for the same reason the bucket access key never existed — the resource's secret half is a plain
+`computed` attribute that would sit in state in cleartext (G5). The key goes into Vault (§9.4), and the `docker` role
+deploys it as a `0600` systemd drop-in on `docker.service`; the daemon reads its AWS credentials from its environment.
+
+Driver options, set per service by the deploy role's Compose template: `awslogs-region` (must match `var.region` —
+hand-copied between the stages like `backup_bucket`, because Ansible does not read state), `awslogs-group` as above,
+`awslogs-stream` named after the container, and `mode: non-blocking` with a 4 MB buffer — G21 explains why blocking is
+wrong here. `docker logs` keeps working through Docker's dual-logging cache. Caddy and Postgres stay on the daemon's
+`json-file` default; only project containers ship.

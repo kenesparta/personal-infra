@@ -24,10 +24,10 @@ management and couples `terraform destroy` to Ansible's working tree.
 | Role        | Responsibility                                                                    | Notes                                     |
 |-------------|-----------------------------------------------------------------------------------|-------------------------------------------|
 | `common`    | apt cache, base packages, `unattended-upgrades`, timezone, `fail2ban`             | Runs first, no dependencies               |
-| `docker`    | Engine + Compose plugin from Docker's apt repo, `web` network, GHCR login, metadata guard, `nftables.service` kept off | Do not use the distro `docker.io` package; guard is G16, service-off is G18 |
+| `docker`    | Engine + Compose plugin from Docker's apt repo, `web` network, GHCR login, metadata guard, `nftables.service` kept off, CloudWatch credential drop-in | Do not use the distro `docker.io` package; guard is G16, service-off is G18, credential is AD-11/G21 |
 | `postgres`  | Compose stack on `web`, no published port, per-project DB + role, `scram-sha-256`, **2 GB tuning** | Passwords from vault; see A2, AD-1, AD-3  |
 | `caddy`     | Compose stack, templated `Caddyfile`, origin-secret gate, named volume for `/data` | `/data` volume is load-bearing — see G8   |
-| `deploy`    | One systemd `.service` + `.timer` per project                                     | Templated from `projects.yml`             |
+| `deploy`    | One systemd `.service` + `.timer` per project                                     | Templated from `projects.yml`; Compose logging → CloudWatch (AD-11) |
 | `backup`    | `pg_dump` script, systemd timer — **no credentials** (G5)                         | Writes to the Lightsail bucket            |
 | `hardening` | `pro attach`, `pro enable usg`, `usg fix` with the G18 tailoring                   | **Separate playbook only** — see A4       |
 
@@ -59,6 +59,7 @@ relying on the convention would silently load nothing.
 | `vault_postgres_passwords`     | `postgres`, `deploy` | Map of `<project name>` → password, one per `projects.yml` entry |
 | `vault_origin_secret`          | `caddy`    | Must equal the CloudFront `custom_header` value (G13)          |
 | `vault_ghcr_username` / `vault_ghcr_token` | `docker` | GHCR PAT, `read:packages` scope only (AD-10)       |
+| `vault_cloudwatch_access_key_id` / `vault_cloudwatch_secret_access_key` | `docker` | The logs-writer key (AD-11) — minted out of band, the host's only static AWS credential (G21) |
 | `vault_project_env`            | `deploy`   | Map of `<project name>` → map of **secret** env vars, merged into the project's `.env` (rev 2.3; non-secret env lives in `projects.yml`) |
 | `vault_ubuntu_pro_token`       | `hardening`| Only needed by `harden.yml`                                    |
 

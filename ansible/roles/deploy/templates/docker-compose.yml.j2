@@ -21,11 +21,20 @@ services:
     env_file:
       - .env
 
+    # AD-11 — stdout/stderr ship to {{ cloudwatch_log_group_prefix }}/{{ item.name }}
+    # (7-day retention, terraform/cloudwatch-logs.tf). The group must exist
+    # BEFORE the container starts: the writer key cannot create groups, and a
+    # missing one fails the start (G21). non-blocking: when CloudWatch is
+    # unreachable, drop lines rather than stall the app's stdout. `docker logs`
+    # keeps working via the dual-logging cache.
     logging:
-      driver: json-file
+      driver: awslogs
       options:
-        max-size: 10m
-        max-file: "3"
+        awslogs-region: {{ cloudwatch_log_region }}
+        awslogs-group: {{ cloudwatch_log_group_prefix }}/{{ item.name }}
+        awslogs-stream: {{ item.name }}
+        mode: non-blocking
+        max-buffer-size: 4m
 
 networks:
   {{ docker_network }}:

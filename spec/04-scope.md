@@ -27,6 +27,8 @@
 - `origin-<project>.kenesparta.dev` A records
 - Per-project CloudFront distributions with the origin secret header
 - Lightsail bucket for database backups, and the instance→bucket resource access that replaces its access key (G5)
+- CloudWatch Logs groups `/kenesparta/<project>` (7-day retention) and the `logs-writer` IAM user behind the `awslogs`
+  driver — the user's key is minted out of band, never by Terraform (§5.9, AD-11, G21)
 - One-time bootstrap via `user_data`
 
 **Destroyed:**
@@ -40,6 +42,7 @@
 
 - Base packages, `unattended-upgrades`, timezone, `fail2ban`
 - Docker Engine, Compose plugin, the external `web` network
+- The dockerd credential drop-in and per-project `awslogs` log shipping (AD-11)
 - GHCR registry authentication
 - PostgreSQL: a single container on `web` publishing no host port, per-project databases and roles (AD-3)
 - Caddy stack and templated `Caddyfile`, including the origin-secret gate

@@ -23,6 +23,26 @@ vault_postgres_superuser_password: ""
 # (G15).
 vault_postgres_passwords:
   blog: ""
+  budget: ""
+
+# Secret env vars merged into each project's `.env` by the deploy role, keyed by
+# `name` in projects.yml. Non-secret values belong in that file's `env` map
+# instead; ORIGIN_SECRET is not here either — `origin_gate_env` fills it from
+# vault_origin_secret so there is one value to rotate, not two (G13).
+#
+# budget (rev 2.6 — the iOS app's API; through rev 2.5 this held the Telegram
+# bot's token and secret token, both now gone with that interface):
+#   CREDENCIALES_API  comma-separated `id:nombre:sha256hex` entries, one per
+#                     user/device. The sha256 is of the bearer token; the raw
+#                     token never leaves the device Keychain. Generate a pair
+#                     with `make token` in the budget-assistant repo. The app
+#                     seeds these into `usuarios_autorizados` at boot, so a
+#                     malformed entry aborts the container's start on purpose.
+vault_project_env:
+  budget:
+    GEMINI_API_KEY: ""
+    GEMINI_MODEL: ""
+    CREDENCIALES_API: ""
 
 # Must be byte-identical to the CloudFront distribution's X-Origin-Verify
 # custom_header. Rotating it is two-sided and ORDERED: Terraform first, then
@@ -33,6 +53,16 @@ vault_origin_secret: ""
 # — this token sits on a single-tenant host with no secret management.
 vault_ghcr_username: kenesparta
 vault_ghcr_token: ""
+
+# The CloudWatch logs-writer key (AD-11) — the host's ONLY static AWS
+# credential (G21), scoped to logs:CreateLogStream/PutLogEvents on
+# /kenesparta/*. Minted OUT OF BAND:
+#   aws iam create-access-key --user-name $(terraform output -raw logs_writer_user)
+# — never by Terraform, which would put the secret half in state (G5). The
+# docker role writes it into a root-only dockerd drop-in. Rotation is
+# one-sided (G21), unlike the origin secret.
+vault_cloudwatch_access_key_id: ""
+vault_cloudwatch_secret_access_key: ""
 
 # NOTE: there are deliberately NO backup credentials here. The instance is
 # attached to the bucket with Lightsail resource access (terraform/storage.tf),
