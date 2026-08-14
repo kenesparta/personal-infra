@@ -134,12 +134,24 @@ resource "aws_iam_role" "github_actions_cnayp_bot_site" {
           StringEquals = {
             "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
           }
-          # Branch- and tag-scoped. A pull request from a fork runs with a `sub`
-          # of `repo:...:pull_request`, which matches neither pattern, so an
+          # TAG-scoped only: the site publishes on a release tag, never on a push
+          # to main. A pull request from a fork runs with a `sub` of
+          # `repo:...:pull_request`, which matches neither pattern, so an
           # untrusted PR cannot publish the site.
+          #
+          # Both spellings of the repository are listed because GitHub now issues
+          # IMMUTABLE subject claims: the owner and repository carry their numeric
+          # ids, as `kenesparta@8525741/cnayp-discord-bot@1333797062`. That is the
+          # form actually presented today — a policy naming only the plain names
+          # is denied, which is not obvious from the error, since STS reports a
+          # claim mismatch as a flat "Not authorized to perform
+          # sts:AssumeRoleWithWebIdentity". The ids are the point of the format:
+          # deleting this repository and recreating one with the same name yields
+          # a different id, so it cannot inherit this trust. The classic spelling
+          # is kept so the role survives the claim format changing back.
           StringLike = {
             "token.actions.githubusercontent.com:sub" = [
-              "repo:kenesparta/cnayp-discord-bot:ref:refs/heads/main",
+              "repo:kenesparta@8525741/cnayp-discord-bot@1333797062:ref:refs/tags/*",
               "repo:kenesparta/cnayp-discord-bot:ref:refs/tags/*",
             ]
           }
