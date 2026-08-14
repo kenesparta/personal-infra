@@ -83,7 +83,7 @@ Everything else is unchanged — GHCR image, deploy timer, Postgres role and dat
   image: ghcr.io/kenesparta/cnayp-discord-bot
   database: cnayp_discord_bot        # no hostname / origin / port — nothing connects to it
   env:
-    RUST_LOG: info
+    LOG_LEVEL: info                  # not RUST_LOG — this project is Go (log/slog)
 ```
 
 The first such project is a Discord **gateway** bot: it dials out over WSS to Discord and holds that socket open for

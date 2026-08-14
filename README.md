@@ -237,7 +237,7 @@ Encrypt certificate; everything else is identical:
   image: ghcr.io/kenesparta/cnayp-discord-bot
   database: cnayp_discord_bot       # no hostname / origin / port
   env:
-    RUST_LOG: info
+    LOG_LEVEL: info                 # not RUST_LOG — this project is Go (log/slog)
 ```
 
 `hostname`, `origin` and `port` are optional **as a set** — all three or none. `site.yml` rejects a half-specified
