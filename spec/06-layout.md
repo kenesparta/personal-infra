@@ -21,7 +21,8 @@ personal-infra/
 │   ├── acm.tf                   # certificate + validation
 │   ├── cloudfront.tf            # app distribution + apex alias
 │   ├── static-cdn.tf            # cdn.kenesparta.dev bucket + distribution
-│   ├── iam.tf                   # OIDC provider + CI role
+│   ├── static-cnayp-bot.tf      # cnayp-bot.kenesparta.dev legal pages (§5.11)
+│   ├── iam.tf                   # OIDC provider + CI roles
 │   ├── legacy.tf                # container service + ECR — DELETED in Phase 7
 │   ├── storage.tf               # backup bucket (Phase 3)
 │   ├── snapshot-weekly.tf       # EventBridge + Lambda weekly snapshots (§5.8)

@@ -2,12 +2,22 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Git
+
+- **Commit only as the current user.** Never append a `Co-Authored-By: Claude ...` trailer or a "Generated with Claude
+  Code" footer to a commit message — the message ends with its last content line. The same applies to PR bodies.
+- `main` is committed to directly; the history is linear and there is no PR workflow. Subjects follow `feat: ...`.
+
 ## Current state
 
-**The migration is complete — all phases 0–9 (2026-07-27).** The instance serves both projects in production:
+**The migration is complete — all phases 0–9 (2026-07-27).** The instance serves two web projects in production:
 `kenesparta.dev` (blog) and `api.kenesparta.dev` (budget API — backend of the iOS app; formerly the budget Telegram
 bot at `bot.kenesparta.dev`, rev ≤2.5), each behind its own CloudFront distribution →
-Caddy (Let's Encrypt) → container, with data restored into the host Postgres. The old estates are gone: the container
+Caddy (Let's Encrypt) → container, with data restored into the host Postgres. A third project, `cnayp_discord_bot`, is
+**headless** (rev 2.10): a Discord gateway bot holding an outbound WSS connection, with no hostname, no origin, no
+Caddy vhost and no certificate — see `projects.yml` below. Its Terms of Service and Privacy Policy are a separate
+static site at `cnayp-bot.kenesparta.dev` (S3 + CloudFront, rev 2.11), deliberately not served by the bot. The old
+estates are gone: the container
 services, ECR repositories, managed database, `../kenesparta.dev/tf` and `../budget-assistant/deploy/tf` are all
 destroyed or deleted; this repository's state (`s3://tf.kenesparta.dev/infra/prod/terraform.tfstate`) is the account's
 only live Terraform. The host is Ubuntu-Pro-attached and CIS Level 1 hardened — via the **G18-tailored profile only**,
@@ -16,7 +26,7 @@ never bare `usg fix cis_level1_server`. The backup path is proven end-to-end: du
 row-for-row parity. The final pre-migration dumps live at `s3://kenesparta-infra-backups/managed-db-final/`; the
 pre-hardening rollback snapshot is `pre-harden-2026-07-27`.
 
-Read `spec/` before touching anything — it is rev 2.3 and records decisions that reverse parts of earlier revisions;
+Read `spec/` before touching anything — it is rev 2.11 and records decisions that reverse parts of earlier revisions;
 `spec/10-phases.md` carries as-executed annotations where reality diverged from the plan.
 
 ## `spec/` is the source of truth
@@ -76,6 +86,15 @@ Per-project distributions cost nothing extra — CloudFront bills per request an
 **3. `projects.yml`.** One file at the repository root, read by *both* tools — Terraform via `yamldecode`, Ansible via
 `vars_files`. It drives origin DNS records, CloudFront distributions, Caddy vhosts, Postgres databases, and deploy
 timers together. Adding a project is a five-line change in one file. Never let the two tools carry separate copies.
+
+`hostname`, `origin` and `port` are the **ingress set**: optional, but only *as a set* (spec §5.3 rev 2.10). Omitting
+all three makes a project **headless** — no distribution, no alias records, no origin A record, no vhost, no
+certificate — which is what `cnayp_discord_bot` is. `name`, `image` and `database` stay mandatory. `site.yml` asserts
+all-three-or-none rather than defaulting the gap: an entry that lost its `origin` to a typo would silently stop getting
+a vhost and a cert, and on an HSTS-preloaded domain (G7) that is an outage found by a user. Absence is the marker;
+there is deliberately no `public:` flag. In Terraform the two subsets are `local.origin_projects` (has an `origin`;
+includes blog) and `local.edge_projects` (has a `hostname`; excludes blog) — never read `each.value.hostname` off
+`local.projects`, which is heterogeneous by design.
 
 The Terraform→Ansible handoff is a generated `ansible/inventory/hosts.ini` written by `make inventory` from
 `terraform output -raw static_ip`. Deliberately *not* a Terraform `local_file` resource — that would couple
@@ -143,6 +162,22 @@ Failure modes that are not obvious from any single file (`spec/12-gotchas.md`):
   in place (`cv/ken_esparta_cv.pdf`, `img/*`) stay on the default behavior, whose five-minute fallback has override
   **off** so the typst-resume CI's own `max-age=3600` on the CV wins. The headers land on error responses too — an
   asset must exist before anything references it, or the 403 gets pinned as well.
+- **The legal pages are G19 in reverse** (spec §5.11). `cnayp-bot.kenesparta.dev` serves the Terms of Service and
+  Privacy Policy Discord requires, and they are stable names overwritten in place — the whole point of updating one is
+  that readers see the new text. No immutable behavior may ever exist on that distribution; it caches five minutes with
+  `min_ttl = 0`, and CI holds `CreateInvalidation` on it. Its S3 origin is behind OAC without `s3:ListBucket`, so a
+  missing key returns **403, not 404**; both map to `/404.html`, which makes that file mandatory in the upload set.
+  Publishing uses `github-actions-cnayp-bot-site` — its *own* role on purpose, because the older
+  `github-actions-ecr-ecs-deploy` carries CDN write and adding a repo to its trust policy would grant it silently.
+- **A new project needs three things applied before `make configure`, in order** (G22): `terraform apply` for the log
+  group (G21), the vault entries, and then a `docker push` so the image exists. The deploy role's "Start each project"
+  does a real pull, so a missing image fails the play *after* the host has been changed — unlike the first two, which
+  fail early. If the image is not ready, leave the project out of `projects.yml` rather than commit an entry that
+  cannot converge.
+- **IAM tag *values* reject apostrophes.** They are validated against `[\p{L}\p{Z}\p{N}_.:/=+\-@]*` — letters, digits,
+  separators and that punctuation only. A `Description` tag reading "the app's pages" fails `CreateRole` with a
+  `ValidationError` naming an opaque `tags.N.member.value`. S3 and CloudFront tags are more permissive; IAM is the one
+  that bites, and it does so mid-apply.
 - **Idempotency is an acceptance criterion.** A second consecutive `make configure` must report zero `changed`. Use
   handlers; never restart unconditionally.
 - **Hardening is a separate playbook.** `usg fix` can lock you out. Snapshot, run `harden.yml`, verify

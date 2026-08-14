@@ -56,6 +56,11 @@ plan: init ## terraform plan
 apply: ## terraform apply the saved plan (run `make plan` first)
 	@$(TF) apply tf.plan
 
+output: ## print one output — make output NAME=cnayp_bot_site_role_arn (no NAME lists all)
+	@# -raw so the value can be piped or pasted straight into a GitHub secret.
+	@# No output is ever a secret (spec §8), so this needs no guard.
+	@if [ -n "$(NAME)" ]; then $(TF) output -raw $(NAME); echo; else $(TF) output; fi
+
 # ── Phase 0: state consolidation (AD-9) ──────────────────────────────────────
 
 OLD_STATE := s3://tf.kenesparta.dev/dns/prod/kenesparta.dev

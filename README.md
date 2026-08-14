@@ -228,6 +228,23 @@ deploy timers — Terraform reads it with `yamldecode`, Ansible with `vars_files
   database: api
 ```
 
+A project that nothing connects *to* — the Discord gateway bot, which dials out over WSS and holds the socket — omits
+the ingress set entirely. No CloudFront distribution, no alias records, no origin `A` record, no Caddy vhost, no Let's
+Encrypt certificate; everything else is identical:
+
+```yaml
+- name: cnayp_discord_bot
+  image: ghcr.io/kenesparta/cnayp-discord-bot
+  database: cnayp_discord_bot       # no hostname / origin / port
+  env:
+    RUST_LOG: info
+```
+
+`hostname`, `origin` and `port` are optional **as a set** — all three or none. `site.yml` rejects a half-specified
+entry rather than defaulting the gap, because losing `origin` to a typo would silently drop a vhost and its
+certificate, and `.dev` is HSTS-preloaded (a TLS gap is an outage, not a warning). See
+[`spec/05-resources.md` §5.3](spec/05-resources.md).
+
 Then add its Postgres password to the vault — the one thing that cannot live in `projects.yml`, since that file is
 committed:
 
@@ -244,6 +261,63 @@ The ceiling is **four services**. RAM is the binding constraint on a 2 GB host: 
 Postgres, ~50 MB Caddy, ~100 MB per service. Growing past four means resizing to `medium_3_0`, which is a stop /
 change-bundle / start on a snapshot — minutes of downtime, no redesign. `site.yml` asserts the ceiling, so adding a
 fifth fails fast instead of discovering it through the OOM killer.
+
+---
+
+## The Discord app's legal pages
+
+Discord requires a Terms of Service URL and a Privacy Policy URL before an application can be verified or listed, and
+fetches both itself. `cnayp-bot.kenesparta.dev` serves them from S3 + CloudFront — **not** from the bot, which stays
+headless. Putting them on the bot would cost an origin hostname, a Caddy vhost, a Let's Encrypt certificate and one of
+the four service slots, and would tie documents Discord fetches to a bot process on a 2 GB box.
+
+Content lives in the [`cnayp-discord-bot`](https://github.com/kenesparta/cnayp-discord-bot) repo and publishes itself
+over OIDC — no access key on either side. Four files are required; `404.html` is not optional, because an S3 origin
+behind OAC answers a *missing* key with 403 and the distribution maps both 403 and 404 to it:
+
+```
+index.html   terms.html   privacy.html   404.html
+```
+
+After `make apply`, wire the workflow with:
+
+```bash
+make output NAME=cnayp_bot_site_role_arn         # → set as AWS_ROLE_ARN in the bot repo
+make output NAME=cnayp_bot_site_bucket
+make output NAME=cnayp_bot_site_distribution_id
+```
+
+```yaml
+# .github/workflows/publish-site.yml in cnayp-discord-bot
+on:
+  push:
+    branches: [main]
+    paths: ['site/**']
+permissions:
+  id-token: write      # required for OIDC; without it the assume-role step fails
+  contents: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+      - run: aws s3 sync site/ "s3://${{ vars.SITE_BUCKET }}/" --delete
+      - run: |
+          aws cloudfront create-invalidation \
+            --distribution-id "${{ vars.SITE_DISTRIBUTION_ID }}" --paths '/*'
+```
+
+The role trusts `main` and tags only. A pull request from a fork presents a `sub` of `repo:...:pull_request`, which
+matches neither pattern, so an untrusted PR cannot publish the site.
+
+**Never put these pages behind an immutable cache.** That is G19 in reverse: the CDN's year-long `immutable` header is
+safe on filename-versioned assets, but a privacy policy is a stable name overwritten in place, and the entire point of
+updating one is that readers see the new text. `immutable` cannot be invalidated out of a browser. This distribution
+therefore caches for five minutes (`min_ttl = 0`), and CI holds `CreateInvalidation` so a correction lands in seconds.
 
 ---
 

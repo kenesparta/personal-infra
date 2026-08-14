@@ -59,9 +59,9 @@ Two optional fields extend an entry (added in rev 2.3, for `budget`):
   `X-Origin-Verify` header themselves in addition to Caddy's gate (the budget API's `ORIGIN_SECRET`). One source,
   no second copy to rotate (G13).
 
-Each **non-blog** project gets its own CloudFront distribution and `hostname` alias records generated from this file
-(blog keeps the migrated singleton distribution in `cloudfront.tf`). All of them ride the wildcard ACM certificate —
-`hostname` must stay within `*.kenesparta.dev` (or the apex).
+Each **non-blog** project that declares a `hostname` gets its own CloudFront distribution and alias records generated
+from this file (blog keeps the migrated singleton distribution in `cloudfront.tf`). All of them ride the wildcard ACM
+certificate — `hostname` must stay within `*.kenesparta.dev` (or the apex).
 
 *Amended in rev 2.6:* the `budget` project is the **authenticated JSON API** (`api.kenesparta.dev`) backing the iOS
 budget app; through rev 2.5 it was the private Telegram bot at `bot.kenesparta.dev`. The hostname swap is only a
@@ -71,6 +71,36 @@ purpose**: the origin name is invisible to users, and renaming it would force a 
 Encrypt certificate against the shared rate budget (G8). App-side auth is per-user bearer tokens hashed in the
 app's own database; the only vault change was swapping the Telegram secrets in `vault_project_env.budget` for
 `CREDENCIALES_API` (§9.4 shape is unchanged).
+
+*Amended in rev 2.10 — headless projects:* `hostname`, `origin` and `port` are optional, but only **as a set**. A
+project that omits all three is **headless**: it accepts no inbound connection, and therefore gets no CloudFront
+distribution, no `hostname` alias records, no origin `A` record, no Caddy vhost and no Let's Encrypt certificate.
+Everything else is unchanged — GHCR image, deploy timer, Postgres role and database, the nightly dump, and the
+`/kenesparta/<name>` CloudWatch group (§5.9).
+
+```yaml
+- name: cnayp_discord_bot
+  image: ghcr.io/kenesparta/cnayp-discord-bot
+  database: cnayp_discord_bot        # no hostname / origin / port — nothing connects to it
+  env:
+    RUST_LOG: info
+```
+
+The first such project is a Discord **gateway** bot: it dials out over WSS to Discord and holds that socket open for
+its lifetime, and Discord delivers slash commands back down the same socket, so no part of the AD-8 edge chain has
+anything to front. The alternative shape — registering an HTTP interactions endpoint URL with Discord — was rejected
+for this service: it would buy a `hostname`, a distribution, a vhost and a certificate against the G8 budget purely to
+receive events the gateway already delivers, and it would put a 3-second Discord response deadline behind a CloudFront
+hop.
+
+The three fields are optional **together and never individually**, and §9 asserts exactly that (all three, or none)
+rather than defaulting the missing ones. The failure that assert exists to prevent is silent: an entry that lost its
+`origin` to a typo would simply stop getting a vhost and a certificate, and on an HSTS-preloaded domain (G7) that is
+an outage found by a user rather than by a run. A partially-specified entry fails the run instead.
+
+No new field marks a headless project — **absence is the marker**. A `public: false` flag was considered and rejected:
+it would be a second thing to keep in step with the fields it describes, and it can disagree with them, whereas the
+coherence assert already provides the fail-fast property the flag would only restate.
 
 ## 5.4 Instance configuration
 
@@ -115,7 +145,7 @@ migration — only the distribution's origin does. Each project additionally get
 
 ```hcl
 resource "aws_route53_record" "origin" {
-  for_each = { for p in local.projects : p.name => p }
+  for_each = local.origin_projects   # rev 2.10 — projects declaring an `origin`, not all of them
   zone_id  = local.zone_id
   name     = each.value.origin
   type     = "A"
@@ -123,6 +153,10 @@ resource "aws_route53_record" "origin" {
   records  = [aws_lightsail_static_ip.app.ip_address]
 }
 ```
+
+A **headless** project (§5.3 rev 2.10) has no `origin`, so it appears in neither `local.origin_projects` nor
+`local.edge_projects` and produces no DNS record at all. Static sites that are not projects — the CDN (§4) and the
+legal pages (§5.11) — carry their own alias records instead, since they have no instance origin to point at.
 
 ## 5.7 Backup bucket
 
@@ -253,3 +287,49 @@ policy makes CloudFront inject the *whole* header family into the viewer request
 forwards every one of them — the origin also sees `-Address`, `-ASN`, `-Latitude`/`-Longitude`, `-Time-Zone`,
 `-Country-Name` and the device-type family, not just the three whitelisted names. Undocumented enrichment, not
 contract: applications may only rely on the whitelisted three plus `true-client-ip`.
+
+## 5.11 Application legal pages — `cnayp-bot.kenesparta.dev` (rev 2.11)
+
+Discord requires a **Terms of Service** URL and a **Privacy Policy** URL as a precondition for verifying or listing an
+application, and fetches both itself. `cnayp-bot.kenesparta.dev` serves them from **S3 + CloudFront**, not from the
+instance:
+
+```
+cnayp-bot.kenesparta.dev  →  CloudFront (wildcard ACM)  →  OAC  →  s3://kenesparta-cnayp-bot-site
+```
+
+The bot does **not** serve its own legal pages. `cnayp_discord_bot` is headless (§5.3 rev 2.10), and giving it these
+two documents would mean an `origin-*` hostname, a Caddy vhost and a Let's Encrypt certificate against the shared
+50/week budget (G8), one of C3's four service slots, and — the part that actually decides it — documents Discord
+fetches whose availability is bound to a bot process on a 2 GB box. A static site costs no RAM and is unaffected by
+anything that happens to the instance.
+
+Shaped after `static-cdn.tf` (§4), with four deliberate differences:
+
+| | `cdn.kenesparta.dev` | `cnayp-bot.kenesparta.dev` | Why |
+|---|---|---|---|
+| Bucket name | dotted | `kenesparta-cnayp-bot-site` | Dots add labels to the S3 REST endpoint that the wildcard cert does not cover. The CDN's name is inherited; `kenesparta-infra-backups` is the newer convention. |
+| Public access block | all false | all true | OAC is the only read path. A service principal with a `SourceArn` condition is not a *public* policy, so `block_public_policy` can stay on. |
+| Versioning | off | **on** | These are legal documents: showing what the policy said on a date is the point, and a bad `s3 sync --delete` stays recoverable. |
+| Immutable behavior | `fonts/*`, `blog/*` | **none, ever** | See below. |
+
+**G19 in reverse — no immutable path may ever exist here.** The CDN's year-long `immutable` cache is safe on
+filename-versioned, write-once assets. A Terms of Service and a Privacy Policy are the exact opposite: stable names,
+overwritten in place, and the whole purpose of updating one is that readers see the new text. `immutable` cannot be
+invalidated out of a browser, so putting these documents behind it would mean a reader holding a superseded privacy
+policy for a year with no way to reach them. The cache policy is therefore `min_ttl = 0`, `default_ttl = 300`,
+`max_ttl = 3600`, and the CI role holds `cloudfront:CreateInvalidation` on this distribution so a correction lands in
+seconds rather than minutes.
+
+**A missing object returns 403, not 404.** The distribution is not granted `s3:ListBucket`, so S3 will not distinguish
+"absent" from "forbidden". Both codes are mapped to `/404.html`, which makes that file a **required** member of the
+upload set — CloudFront falls back to its own generic error page if it is absent. The published set is therefore
+`index.html`, `terms.html`, `privacy.html`, `404.html`.
+
+**Publishing is OIDC, and the role is its own.** `github-actions-cnayp-bot-site` trusts
+`repo:kenesparta/cnayp-discord-bot` on `main` and tags only, and grants `s3:PutObject`/`s3:DeleteObject` on that one
+bucket plus invalidation on that one distribution. It is deliberately **not** a fourth `sub` on
+`github-actions-ecr-ecs-deploy`: that role carries `cdn-bucket-write-policy`, so extending its trust policy would hand
+a Discord bot's CI write access to the CV and the blog's assets — an authorization change made invisibly, by editing a
+list of repository names. Fork pull requests present a `sub` of `repo:...:pull_request`, matching neither pattern, so
+an untrusted PR cannot publish. No access key exists on either side.

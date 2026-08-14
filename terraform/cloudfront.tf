@@ -13,9 +13,11 @@ data "sops_file" "prod_secrets" {
 
 # spec §5.6 — every project's origin name resolves DIRECTLY to the instance:
 # Caddy must answer HTTP-01 on it, and a name pointing at CloudFront cannot
-# satisfy that challenge (AD-8, AD-4). local.projects is the projects.yml map.
+# satisfy that challenge (AD-8, AD-4). local.origin_projects is the subset of
+# projects.yml that declares an `origin`; a headless project has none and gets
+# no record here (§5.3 rev 2.10).
 resource "aws_route53_record" "origin" {
-  for_each = local.projects
+  for_each = local.origin_projects
 
   zone_id = local.zone_id
   name    = each.value.origin
@@ -178,13 +180,15 @@ resource "aws_route53_record" "apex_cloudfront" {
 }
 
 # ── Per-project distributions (spec §5.3 rev 2.3, AD-8) ──────────────────────
-# One distribution per NON-blog project — blog keeps the migrated singleton
-# above. CloudFront routes by path, never by Host, so hostnames cannot share a
-# distribution; per-distribution cost is zero (billing is per request/GB). All
-# hostnames ride the wildcard ACM cert, so they must stay under kenesparta.dev.
+# One distribution per NON-blog project that declares a hostname — blog keeps
+# the migrated singleton above, and a headless project (§5.3 rev 2.10) has no
+# public name to alias. CloudFront routes by path, never by Host, so hostnames
+# cannot share a distribution; per-distribution cost is zero (billing is per
+# request/GB). All hostnames ride the wildcard ACM cert, so they must stay under
+# kenesparta.dev.
 
 resource "aws_cloudfront_distribution" "project" {
-  for_each = { for name, p in local.projects : name => p if name != "blog" }
+  for_each = local.edge_projects
 
   enabled         = true
   is_ipv6_enabled = true
@@ -247,7 +251,7 @@ resource "aws_cloudfront_distribution" "project" {
 }
 
 resource "aws_route53_record" "project_hostname_a" {
-  for_each = { for name, p in local.projects : name => p if name != "blog" }
+  for_each = local.edge_projects
 
   zone_id = local.zone_id
   name    = each.value.hostname
@@ -261,7 +265,7 @@ resource "aws_route53_record" "project_hostname_a" {
 }
 
 resource "aws_route53_record" "project_hostname_aaaa" {
-  for_each = { for name, p in local.projects : name => p if name != "blog" }
+  for_each = local.edge_projects
 
   zone_id = local.zone_id
   name    = each.value.hostname

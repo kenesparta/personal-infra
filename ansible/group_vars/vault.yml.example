@@ -24,6 +24,7 @@ vault_postgres_superuser_password: ""
 vault_postgres_passwords:
   blog: ""
   budget: ""
+  cnayp_discord_bot: ""
 
 # Secret env vars merged into each project's `.env` by the deploy role, keyed by
 # `name` in projects.yml. Non-secret values belong in that file's `env` map
@@ -38,11 +39,23 @@ vault_postgres_passwords:
 #                     with `make token` in the budget-assistant repo. The app
 #                     seeds these into `usuarios_autorizados` at boot, so a
 #                     malformed entry aborts the container's start on purpose.
+#
+# cnayp_discord_bot (rev 2.10 — the headless Discord gateway bot, §5.3):
+#   DISCORD_TOKEN     the bot token from the Discord developer portal. It is the
+#                     ONLY credential the bot needs: the gateway is outbound, so
+#                     there is no signing key and no interactions endpoint. An
+#                     invalid token is not a crash-once — the container's
+#                     `restart: unless-stopped` will retry it forever, and there
+#                     is no alarm at this scale, so check `docker logs` after
+#                     the first start rather than assuming a quiet box is a
+#                     working one.
 vault_project_env:
   budget:
     GEMINI_API_KEY: ""
     GEMINI_MODEL: ""
     CREDENCIALES_API: ""
+  cnayp_discord_bot:
+    DISCORD_TOKEN: ""
 
 # Must be byte-identical to the CloudFront distribution's X-Origin-Verify
 # custom_header. Rotating it is two-sided and ORDERED: Terraform first, then

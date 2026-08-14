@@ -9,12 +9,18 @@
 #
 # Fields:
 #   name      identifier: container name, systemd unit, Postgres role
+#   image     GHCR image, pulled by the systemd timer (AD-10)
+#   database  Postgres database + role name
+#
+# The ingress set — hostname/origin/port — is OPTIONAL, but only as a SET. Give
+# all three or none; site.yml rejects a half-specified entry (spec §5.3 rev
+# 2.10). Omitting them makes the project HEADLESS: no CloudFront distribution,
+# no alias records, no origin A record, no Caddy vhost, no Let's Encrypt cert.
+#
 #   hostname  public name; becomes a CloudFront alias (must be covered by the ACM cert)
 #   origin    A record -> static IP; Caddy vhost + Let's Encrypt cert (must resolve
 #             DIRECTLY to the instance so HTTP-01 can succeed — see AD-8)
-#   image     GHCR image, pulled by the systemd timer (AD-10)
 #   port      container port Caddy proxies to
-#   database  Postgres database + role name
 
 projects:
   - name: blog
@@ -43,3 +49,17 @@ projects:
     env:
       HTTP_ADDR: "0.0.0.0:8080"
       TYPST_BIN: typst
+
+  # Discord gateway bot — the first HEADLESS project (spec §5.3 rev 2.10). It
+  # opens an outbound WSS connection to Discord and holds it; nothing ever
+  # connects TO it, so it has no hostname/origin/port and the whole AD-8 edge
+  # chain is absent. Slash commands arrive down the same socket — an HTTP
+  # interactions endpoint would buy a certificate and a CloudFront hop to
+  # receive events the gateway already delivers.
+  #
+  # DISCORD_TOKEN lives in vault_project_env.cnayp_discord_bot, never here.
+  - name: cnayp_discord_bot
+    image: ghcr.io/kenesparta/cnayp-discord-bot
+    database: cnayp_discord_bot
+    env:
+      RUST_LOG: info

@@ -33,5 +33,25 @@ output "logs_writer_user" {
   description = "IAM user whose access key is minted OUT OF BAND for the awslogs driver — never by Terraform (spec §5.9, G21)."
 }
 
+# ── cnayp-bot.kenesparta.dev legal pages (§5.11) ─────────────────────────────
+# The three values the cnayp-discord-bot repo's publish workflow needs. None is
+# a secret: the role is assumed over OIDC, so there is no key to leak and the
+# ARN is useless to anyone whose GitHub token does not match the trust policy.
+
+output "cnayp_bot_site_bucket" {
+  value       = aws_s3_bucket.cnayp_bot_site.id
+  description = "S3 sync target for the Terms of Service / Privacy Policy pages."
+}
+
+output "cnayp_bot_site_distribution_id" {
+  value       = aws_cloudfront_distribution.cnayp_bot_site.id
+  description = "For `aws cloudfront create-invalidation` after publishing a correction."
+}
+
+output "cnayp_bot_site_role_arn" {
+  value       = aws_iam_role.github_actions_cnayp_bot_site.arn
+  description = "Set as AWS_ROLE_ARN in the cnayp-discord-bot repo — assumed over OIDC, no key involved."
+}
+
 # No secret is ever an output — the CloudFront origin secret in particular
 # (spec §8).

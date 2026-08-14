@@ -105,3 +105,103 @@ resource "aws_iam_role_policy" "github_actions_s3" {
     ]
   })
 }
+
+# ── cnayp-discord-bot → the legal-pages bucket (spec §5.11) ──────────────────
+# A SEPARATE role, deliberately, rather than a fourth `sub` on the role above.
+# That role carries cdn-bucket-write-policy, so adding the bot's repository to
+# its trust policy would hand a Discord bot's CI write access to the CV and the
+# blog's assets — an authorization decision made invisibly, by editing a list of
+# repository names. One role, one repository, one bucket.
+#
+# The role is assumed over OIDC and issues no key: there is nothing to store in
+# GitHub beyond the ARN, and nothing to rotate. Same reasoning as AD-10/G5 —
+# a long-lived secret avoided rather than protected.
+resource "aws_iam_role" "github_actions_cnayp_bot_site" {
+  name = "github-actions-cnayp-bot-site"
+  path = "/github-actions/"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "AllowCnaypBotRepoOIDC"
+        Effect = "Allow"
+        Principal = {
+          Federated = aws_iam_openid_connect_provider.github.arn
+        }
+        Action = "sts:AssumeRoleWithWebIdentity"
+        Condition = {
+          StringEquals = {
+            "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
+          }
+          # Branch- and tag-scoped. A pull request from a fork runs with a `sub`
+          # of `repo:...:pull_request`, which matches neither pattern, so an
+          # untrusted PR cannot publish the site.
+          StringLike = {
+            "token.actions.githubusercontent.com:sub" = [
+              "repo:kenesparta/cnayp-discord-bot:ref:refs/heads/main",
+              "repo:kenesparta/cnayp-discord-bot:ref:refs/tags/*",
+            ]
+          }
+        }
+      }
+    ]
+  })
+
+  tags = merge(
+    local.common_tags,
+    {
+      Name = "github-actions-cnayp-bot-site"
+      # No apostrophe. IAM tag VALUES are validated against
+      # [\p{L}\p{Z}\p{N}_.:/=+\-@]* — letters, digits, separators and that
+      # punctuation set only. An apostrophe is in none of those classes and
+      # CreateRole rejects the whole call, which is why this reads "the legal
+      # pages for X" rather than "X's legal pages". S3 and CloudFront tags are
+      # more permissive; IAM is the one that bites.
+      Description = "Publishes the legal pages for cnayp-discord-bot to ${local.cnayp_bot_site_domain}"
+    }
+  )
+}
+
+resource "aws_iam_role_policy" "github_actions_cnayp_bot_site" {
+  name = "cnayp-bot-site-publish-policy"
+  role = aws_iam_role.github_actions_cnayp_bot_site.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        # No s3:PutObjectAcl, unlike the CDN policy above: the bucket blocks
+        # public ACLs entirely and OAC is the read path, so the ability to set
+        # one would be a way to make a mistake, not a capability that is needed.
+        Sid    = "AllowSitePublish"
+        Effect = "Allow"
+        Action = [
+          "s3:PutObject",
+          "s3:DeleteObject"
+        ]
+        Resource = "${aws_s3_bucket.cnayp_bot_site.arn}/*"
+      },
+      {
+        # `aws s3 sync --delete` needs to enumerate before it can diff.
+        Sid    = "AllowSiteList"
+        Effect = "Allow"
+        Action = [
+          "s3:ListBucket",
+          "s3:GetBucketLocation"
+        ]
+        Resource = aws_s3_bucket.cnayp_bot_site.arn
+      },
+      {
+        # The edge holds an object for at most an hour on its own (§5.11), so
+        # this is not what makes an update land — it is what makes a correction
+        # to a published legal document land in seconds instead of minutes.
+        # Scoped to this one distribution.
+        Sid      = "AllowSiteInvalidation"
+        Effect   = "Allow"
+        Action   = "cloudfront:CreateInvalidation"
+        Resource = aws_cloudfront_distribution.cnayp_bot_site.arn
+      }
+    ]
+  })
+}

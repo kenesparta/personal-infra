@@ -32,7 +32,12 @@
 	}
 }
 
-{% for p in projects %}
+# Only projects that declare an `origin` appear below. A HEADLESS project (spec
+# §5.3 rev 2.10 — the Discord gateway bot) has no inbound side at all: giving it
+# a vhost would make Caddy request a Let's Encrypt certificate, against the
+# 50/week budget every origin-* name shares (G8), for a name nothing resolves or
+# requests.
+{% for p in projects if p.origin is defined %}
 # {{ p.name }} — public: {{ p.hostname }}
 {{ p.origin }} {
 	import origin_gate

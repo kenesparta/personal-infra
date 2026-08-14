@@ -29,10 +29,17 @@
           - projects is defined and projects | length > 0
           - projects | length <= 4
           - projects | map(attribute='name') | list | unique | length == projects | length
-          - projects | map(attribute='port') | list | unique | length == projects | length
+          # selectattr FIRST: `port` is optional for a headless project (spec
+          # §5.3 rev 2.10) and map(attribute=...) RAISES on an entry that lacks
+          # the key rather than yielding Undefined, which would turn a valid
+          # projects.yml into a template error here instead of an assert.
+          - >-
+            projects | selectattr('port', 'defined') | map(attribute='port') | list | unique | length
+            == projects | selectattr('port', 'defined') | list | length
         fail_msg: >-
           projects.yml is unusable: it must define 1-4 projects (C3 — RAM-bound
-          at small_3_0, see AD-1) with unique names and unique ports.
+          at small_3_0, see AD-1) with unique names, and unique ports among the
+          projects that declare one.
 
     - name: Require project identifiers to be safe in every context they reach
       # A project's `name` and `database` are interpolated into SQL identifiers,
@@ -44,11 +51,31 @@
         that:
           - item.name is match('^[a-z][a-z0-9_]{0,30}$')
           - item.database is match('^[a-z][a-z0-9_]{0,30}$')
-          - item.port | int > 1024
+          - item.port is not defined or item.port | int > 1024
         fail_msg: >-
           Project '{{ item.name }}': `name` and `database` must be lowercase,
           start with a letter, and contain only letters, digits and
-          underscores; `port` must be above 1024.
+          underscores; `port`, if present, must be above 1024.
+      loop: "{{ projects }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Require the ingress fields to be all present or all absent
+      # spec §5.3 rev 2.10 — hostname/origin/port are optional as a SET. A
+      # project with none of them is headless (the Discord gateway bot): no
+      # CloudFront distribution, no vhost, no certificate. A project with SOME
+      # of them is a typo, and the damage is silent — losing `origin` alone
+      # would quietly drop the vhost and its Let's Encrypt certificate, and on
+      # an HSTS-preloaded domain (G7) that is an outage, not a warning. So it is
+      # rejected here rather than defaulted.
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - (item.keys() | select('in', ['hostname', 'origin', 'port']) | list | length) in [0, 3]
+        fail_msg: >-
+          Project '{{ item.name }}' declares only part of the ingress set. Give
+          `hostname`, `origin` and `port` together, or omit all three to make it
+          headless.
       loop: "{{ projects }}"
       loop_control:
         label: "{{ item.name }}"

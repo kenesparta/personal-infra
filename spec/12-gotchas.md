@@ -196,3 +196,21 @@ G16's guard and threat model are untouched. Things that bite:
   re-adding a `json-file` block.
 - **Rotation is one-sided**, unlike the origin secret (G13): mint a second key on the IAM user, splice Vault, run
   `make configure`, then delete the old key.
+
+**G22 — A new project's image must exist in GHCR *before* its first `make configure`.** (rev 2.10) The `deploy` role's
+last two steps are not just template writes: "Start each project" runs `docker_compose_v2` with `pull: missing`, which
+is a real pull. Add an entry to `projects.yml` before CI has ever pushed its image and that task fails on the new
+project, which fails the play — so the `backup` role never runs and the host is left half-configured, even though the
+two projects that *were* already running keep serving (nothing tore them down). The same is true of a typo in `image:`,
+and it looks identical.
+
+The full ordering for adding a project is therefore three-sided, and only the first two are obvious:
+
+1. `terraform apply` — creates `/kenesparta/<name>`. A container whose log group is missing fails to start (G21).
+2. Vault — `vault_postgres_passwords.<name>` (site.yml refuses to run without it) plus any `vault_project_env.<name>`.
+3. **`docker push` to GHCR** — at least one image under the moving tag.
+
+...and only then `make configure`. Steps 1 and 2 fail loudly and early, in a pre-task or on container start; step 3
+fails in the middle of a run that has already changed the host. If the image genuinely is not ready yet, leave the
+project out of `projects.yml` rather than committing an entry that cannot converge — a half-applied `projects.yml` is
+the one state neither tool is designed to sit in.
