@@ -62,4 +62,7 @@ projects:
     image: ghcr.io/kenesparta/cnayp-discord-bot
     database: cnayp_discord_bot
     env:
-      RUST_LOG: info
+      # LOG_LEVEL, not RUST_LOG: this project is Go (log/slog), unlike blog and
+      # budget. It reads DISCORD_TOKEN, DISCORD_GUILD_ID and LOG_LEVEL, and
+      # ignores anything else. Accepts debug|info|warn|error.
+      LOG_LEVEL: info
