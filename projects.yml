@@ -66,3 +66,12 @@ projects:
       # budget. It reads DISCORD_TOKEN, DISCORD_GUILD_ID and LOG_LEVEL, and
       # ignores anything else. Accepts debug|info|warn|error.
       LOG_LEVEL: info
+      # Scope the slash commands to this one guild instead of registering them
+      # globally. The bot serves a single community, and a guild-scoped bulk
+      # overwrite takes effect immediately where a global one needs up to an
+      # hour to propagate. Quoted because a bare 19-digit scalar is an integer
+      # and only the exact digits are a valid snowflake.
+      #
+      # Not a secret, so it belongs here rather than in the vault: a guild id
+      # is visible to every member of that server and grants nothing on its own.
+      DISCORD_GUILD_ID: "1461104432530854072"
