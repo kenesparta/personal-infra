@@ -168,6 +168,11 @@ resource "aws_cloudfront_distribution" "cnayp_bot_site" {
   price_class         = "PriceClass_100"
   aliases             = [local.cnayp_bot_site_domain]
 
+  # §5.14 — additive, not a switch: HTTP/3 where the client supports it, HTTP/2
+  # otherwise. Without this the CloudFront default is `http2` and no viewer ever
+  # attempts QUIC. Unrelated to Caddy's 443/udp publish, which no viewer reaches.
+  http_version = "http2and3"
+
   origin {
     domain_name              = aws_s3_bucket.cnayp_bot_site.bucket_regional_domain_name
     origin_id                = "s3-cnayp-bot-site"

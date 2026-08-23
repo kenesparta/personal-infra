@@ -130,6 +130,11 @@ resource "aws_cloudfront_distribution" "cdn_distribution" {
 
   aliases = [local.cdn_main_bucket]
 
+  # §5.14 — additive, not a switch: HTTP/3 where the client supports it, HTTP/2
+  # otherwise. Without this the CloudFront default is `http2` and no viewer ever
+  # attempts QUIC. Unrelated to Caddy's 443/udp publish, which no viewer reaches.
+  http_version = "http2and3"
+
   origin {
     domain_name              = aws_s3_bucket.cdn_bucket.bucket_regional_domain_name
     origin_id                = "S3-cdn.kenesparta.dev"

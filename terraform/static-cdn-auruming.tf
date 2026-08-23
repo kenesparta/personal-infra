@@ -152,6 +152,10 @@ resource "aws_cloudfront_distribution" "auruming_cdn" {
   price_class = "PriceClass_100"
   aliases     = [local.auruming_cdn_domain]
 
+  # §5.14 — additive, not a switch: HTTP/3 where the client supports it, HTTP/2
+  # otherwise. Without this the CloudFront default is `http2` and no viewer ever
+  # attempts QUIC. Unrelated to Caddy's 443/udp publish, which no viewer reaches.
+  http_version = "http2and3"
   # No default_root_object: this is an asset bucket, not a site. A request for
   # `/` should 403 -> 404 rather than resolve to an index.html nobody uploaded.
 

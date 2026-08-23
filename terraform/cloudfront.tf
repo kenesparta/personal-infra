@@ -105,6 +105,10 @@ resource "aws_cloudfront_distribution" "app" {
   comment         = "kenesparta.dev -> instance origin (Caddy, GHCR image)"
   aliases         = [var.primary_dns]
   price_class     = "PriceClass_100"
+  # §5.14 — additive, not a switch: HTTP/3 where the client supports it, HTTP/2
+  # otherwise. Without this the CloudFront default is `http2` and no viewer ever
+  # attempts QUIC. Unrelated to Caddy's 443/udp publish, which no viewer reaches.
+  http_version = "http2and3"
 
   origin {
     origin_id   = "instance"
@@ -202,6 +206,10 @@ resource "aws_cloudfront_distribution" "project" {
   comment         = "${each.value.hostname} -> instance origin (Caddy, GHCR image)"
   aliases         = [each.value.hostname]
   price_class     = "PriceClass_100"
+  # §5.14 — additive, not a switch: HTTP/3 where the client supports it, HTTP/2
+  # otherwise. Without this the CloudFront default is `http2` and no viewer ever
+  # attempts QUIC. Unrelated to Caddy's 443/udp publish, which no viewer reaches.
+  http_version = "http2and3"
 
   origin {
     origin_id   = "instance"

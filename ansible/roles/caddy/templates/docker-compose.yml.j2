@@ -15,7 +15,13 @@ services:
     ports:
       - "80:80"
       - "443:443"
-      - "443:443/udp"   # HTTP/3
+      # HTTP/3 for anything that reaches Caddy DIRECTLY — which, by design, is
+      # nothing: the only route here is origin-<project>.<domain>, and AD-8
+      # exists to ensure only CloudFront connects there, over HTTP/1.1. Viewers
+      # get QUIC from the DISTRIBUTION (`http_version = "http2and3"`, spec
+      # §5.14), not from this line. Kept because it costs nothing and would
+      # matter if a project were ever served directly.
+      - "443:443/udp"
 
     networks:
       - {{ docker_network }}

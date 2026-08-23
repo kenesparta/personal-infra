@@ -479,3 +479,34 @@ serves. Widen it only if something outside the site is meant to consume these as
 is an authorization decision, and §5.11 records why those are made explicitly and one-role-per-repo-per-bucket rather
 than by appending a `sub` to an existing role. Until one exists, uploads are a manual `aws s3 sync` under the SSO
 admin profile, which is appropriate for a CDN with no automated producer.
+
+## 5.14 HTTP/3 at the edge (rev 2.14)
+
+Every distribution sets `http_version = "http2and3"`. Until rev 2.13 none of them set it at all, so all six took the
+CloudFront default of `http2` and no viewer ever attempted QUIC.
+
+`http2and3` is **additive, not a switch**: a client that speaks HTTP/3 gets it, everything else negotiates HTTP/2 or
+HTTP/1.1 exactly as before. There is no cost change — CloudFront bills per request and per GB, not per protocol — and
+no cache, origin or certificate implication. The origin leg is untouched: CloudFront talks to a custom origin over
+HTTP/1.1 regardless of what viewers use.
+
+The measurable benefit is on lossy, high-latency links: QUIC has no TCP head-of-line blocking and a shorter handshake.
+That matters most for `cdn.auruming.com`, where media is served to viewers in South America from North American edges
+(§5.13 — `PriceClass_100` has no South American presence), and it is exactly the case where the extra round trips of
+TCP + TLS are most visible.
+
+**The Caddy container's `443/udp` publish is unrelated, and has never served a viewer.** `roles/caddy/templates/
+docker-compose.yml.j2` maps `443:443/udp` and comments it `HTTP/3`, which is true of Caddy in isolation and
+misleading in this architecture: the only route to that port is `origin-<project>.<domain>`, and AD-8 exists to
+ensure nothing but CloudFront ever connects there — over HTTP/1.1. Enabling HTTP/3 at the distribution is what
+actually gives viewers QUIC. The UDP publish is left in place (it costs nothing and would matter if a project were
+ever served directly) but it is not the reason HTTP/3 works, and reading it as such is the trap this paragraph
+exists to close.
+
+**Verifying it:** a distribution with HTTP/3 enabled advertises `alt-svc: h3=":443"`. That header is how a browser
+discovers QUIC at all, so its presence — not a successful `curl --http3` — is the real check, and it is observable
+from any client:
+
+```bash
+curl -sS -o /dev/null -D - https://auruming.com | grep -i alt-svc
+```
