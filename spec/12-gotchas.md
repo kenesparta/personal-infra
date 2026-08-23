@@ -215,8 +215,10 @@ fails in the middle of a run that has already changed the host. If the image gen
 project out of `projects.yml` rather than committing an entry that cannot converge — a half-applied `projects.yml` is
 the one state neither tool is designed to sit in.
 
-**G23 — `auruming.com` is registered at Namecheap, so the zone cutover is manual, ordered, and DNSSEC makes the last
-step a foot-gun.** (rev 2.12) Unlike `kenesparta.dev` and `kecc.link`, this domain's registrar is not Route 53.
+**G23 — A zone whose registrar is not Route 53 has a manual, ordered cutover, and DNSSEC makes the last step a
+foot-gun.** (rev 2.12; **executed and closed for all three domains 2026-08-23** — see §5.6.1 for the published DS
+records. The procedure below is retained because it applies verbatim to the next domain, and to any KSK rotation on
+an existing one.) Unlike `kenesparta.dev` and `kecc.link`, this domain's registrar is not Route 53.
 Terraform can create the hosted zone, sign it, and write records into it, and **none of that is visible to the
 internet** until the nameservers are changed by hand in the Namecheap dashboard. Two things break if the steps are
 run in the wrong order:
@@ -248,6 +250,19 @@ applied and `aws_route53_hosted_zone_dnssec.auruming` reports `SIGNING`.
 Reversing the whole thing is step 3 in reverse (point the nameservers back), but **only after** the DS is removed and
 has expired — a domain delegated away from a signed zone while its DS is still published fails validation exactly as
 in step 6.
+
+*As executed, 2026-08-23.* The delegation and DS landed without incident on all three zones, and the estate went from
+signed-but-unenforced to validated. Two observations worth keeping:
+
+- **A resolver can lag by a cache entry, and it looks like a failure.** Immediately after publication `auruming.com`
+  validated on Google and Quad9 but not Cloudflare, which still held the apex answer cached from before the DS
+  existed — and a cached-insecure entry keeps that status until it expires. The way to tell that apart from a broken
+  chain is to query a name that cannot be cached: a random non-existent subdomain returned `ad` from the same
+  resolver, which requires walking root → parent → zone to prove the NXDOMAIN. Confirm the resolver validates at all
+  with `dig dnssec-failed.org @<resolver>` — that must be SERVFAIL.
+- **The mail records are the reason to sequence this.** `kenesparta.dev` carries the Proton MX/SPF/DKIM/DMARC set, so
+  its blast radius on a bad DS is inbound mail, not just the websites. Do the lowest-stakes domain first, confirm
+  `ad`, and leave that one for last.
 
 **G24 — `local.domains` is the only thing stopping a project's records landing in the wrong zone.** (rev 2.12) Before
 AD-13 there was one zone and one certificate, and `local.zone_id` was correct by construction. Now `domain` in

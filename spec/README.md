@@ -3,7 +3,7 @@
 Terraform + Ansible project provisioning a single-host, multi-project application server on AWS Lightsail, and
 consolidating all `kenesparta.dev` AWS infrastructure into one state.
 
-**Status:** rev 2.14 **Owner:** kenesparta **Target:** `kenesparta.dev` and `auruming.com` — four Rust services on one host (C3, met exactly)
+**Status:** rev 2.15 **Owner:** kenesparta **Target:** `kenesparta.dev` and `auruming.com` — four Rust services on one host (C3, met exactly)
 
 One file per numbered section; the numbering is stable and is what code comments cite (`spec §5.3`). The spec is the
 source of truth — see [§1](01-purpose.md): if implementation needs something not described here, amend the spec first.
@@ -16,7 +16,7 @@ source of truth — see [§1](01-purpose.md): if implementation needs something 
 | 2  | [Constraints](02-constraints.md)           | C1–C11 — fixed inputs, not preferences                          |
 | 3  | [Architecture Decisions](03-decisions.md)  | AD-1–AD-13 — what was chosen *and what was rejected*            |
 | 4  | [Scope Boundary](04-scope.md)              | Terraform-managed / Ansible-managed / neither                   |
-| 5  | [Resource Specification](05-resources.md)  | Providers, backend, `projects.yml`, instance, firewall, DNS, the `auruming.com` estate (§5.12–5.13), HTTP/3 (§5.14) |
+| 5  | [Resource Specification](05-resources.md)  | Providers, backend, `projects.yml`, instance, firewall, DNS, DNSSEC delegation (§5.6.1), the `auruming.com` estate (§5.12–5.13), HTTP/3 (§5.14) |
 | 6  | [Repository Layout](06-layout.md)          | File tree, and why it is flat                                   |
 | 7  | [Variables](07-variables.md)               | Terraform inputs                                                 |
 | 8  | [Outputs](08-outputs.md)                   | Terraform outputs — never secrets                                |

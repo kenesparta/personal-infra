@@ -168,6 +168,12 @@ Failure modes that are not obvious from any single file (`spec/12-gotchas.md`):
   `InvalidClientTokenId`, which reads exactly like an expired SSO session and sends you to `make login`, which fixes
   nothing. `aws sts get-caller-identity --profile "$TF_VAR_aws_sso_profile"` succeeding while terraform fails is the
   tell. A one-off `-target` operation gets its own Makefile target rather than a documented raw command.
+- **DNSSEC is signed AND validated on all three zones since 2026-08-23** (spec §5.6.1). Signing is Route 53's; the DS
+  record that makes resolvers *enforce* it lives in the parent zone and is the registrar's, so the two halves are in
+  different places and only one of them is in this repo. Every zone was signed-but-unenforced from the migration until
+  that date, which no acceptance check caught — `dig DNSKEY` returning keys proves nothing. The check is
+  `dig +dnssec <zone> @1.1.1.1` returning the `ad` flag. A DS is derived from the KSK, so rotating one means publishing
+  the new DS at the registrar *before* retiring the old key.
 - **`auruming.com`'s delegation and DS record are not Terraform's** (G23). It is registered at Namecheap. Terraform
   creates and signs the zone, and none of that is visible to the internet until four nameservers are pasted into the
   registrar; `terraform plan` is clean either way, which makes this the one place a green plan does not mean a working

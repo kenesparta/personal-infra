@@ -302,6 +302,11 @@ nothing else in the fan-out needs to know a domain exists.
 are typed into a registrar dashboard by hand. `terraform plan` is clean whether or not they have been — this is the one
 place in the repo where a green plan does not mean a working system. Order matters ([G23](spec/12-gotchas.md)):
 
+> **Done for the current estate (2026-08-23).** All three zones are delegated and their DS records published, so
+> DNSSEC is validated across `kenesparta.dev`, `kecc.link` and `auruming.com` — see
+> [§5.6.1](spec/05-resources.md) for the records. The steps below stand for the *next* domain, and for any KSK
+> rotation on an existing one.
+
 ```bash
 make login                        # SSO expires; every step below needs it
 

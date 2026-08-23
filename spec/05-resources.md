@@ -192,6 +192,46 @@ Proton mail and Discord records (§5.6 below), the CDN, and the legal-pages site
 plan-time failure on the map lookup, not a record created in the wrong place. Static sites that are not projects — the CDN (§4) and the
 legal pages (§5.11) — carry their own alias records instead, since they have no instance origin to point at.
 
+### 5.6.1 DNSSEC delegation state (rev 2.15, completed 2026-08-23)
+
+Every zone in this account is signed by Route 53 — KSK in KMS, `ECDSAP256SHA256`, one KSK per zone — and, **since
+2026-08-23, every one is also validated**, because the DS record is finally published in each parent zone.
+
+That distinction is the whole point of this subsection. Signing and validation are separate halves in separate
+places: Route 53 signs the zone and publishes `DNSKEY`/`RRSIG`, but the **DS record lives in the PARENT zone**
+(`.dev`, `.link`, `.com`), which only the registrar can write to. Until 2026-08-23 no DS existed for any domain, so
+all three zones were signed and **none was enforced** — resolvers had nothing telling them to check the signatures.
+Earlier revisions of this spec described the zones as "DNSSEC-signed", which was true and easy to misread as
+"protected". They were not.
+
+Published DS records, verified byte-identical against `aws route53 get-dnssec` on 2026-08-23:
+
+| Zone | Key Tag | Alg | Digest type | Digest | Registrar |
+|---|---|---|---|---|---|
+| `kenesparta.dev` | 29022 | 13 | 2 | `73DF0CB7E80EFF7C6A03D67E8767131E319768166E75ADC27C6B0E8B83C9110F` | not Route 53 |
+| `kecc.link` | 65505 | 13 | 2 | `F08C0C6528CA3EC379D47A86EF905EB86CD0E6B56C502FE9C9D46E41CB7C77A0` | Namecheap |
+| `auruming.com` | 189 | 13 | 2 | `34CF40A9B30D3017253628CB6053ECB53A10F8BD87ACD43C54A966D10F513558` | Namecheap |
+
+Algorithm 13 is ECDSA P-256 with SHA-256; digest type 2 is SHA-256. These values are **derived from the KSK**, not
+chosen — reproduce them at any time with:
+
+```bash
+aws route53 get-dnssec --hosted-zone-id <zone> --query 'KeySigningKeys[0].DSRecord' --output text
+```
+
+They are not secrets (§8): a DS is a hash of a public key whose entire purpose is being readable by every resolver.
+
+**A DS is only valid for the KSK it was derived from.** Rotating or replacing a key-signing key therefore requires
+publishing the new DS at the registrar *before* retiring the old key, and Terraform cannot do that step for any of
+these domains — AWS registers none of them (`aws route53domains list-domains` returns empty), so the registrar is the
+only channel to the parent. Destroying and recreating a KSK without that ordering is the G23 outage in its most
+avoidable form.
+
+**AWS could own this step only by being the registrar.** Route 53 Domains exposes
+`aws_route53domains_delegation_signer_record` (present in the pinned provider), which pushes a DS to the registry for
+domains it sponsors. Using it would mean transferring registration, which is a registrar migration and not a config
+change. Rejected as disproportionate: the manual step happens once per KSK, which is approximately never.
+
 ## 5.7 Backup bucket
 
 A Lightsail bucket on the `small_1_0` bundle — 5 GB, $1/mo, matching [§14](14-cost.md). Versioning is enabled so an

@@ -13,7 +13,10 @@
 9. No container publishes ports to the host except Caddy.
 10. A `pg_dump` artifact exists in the backup bucket and has been restored successfully at least once.
 11. Route 53 zones retain their original zone IDs and DNSSEC remains `SIGNED`; mail to the Proton addresses still
-    delivers.
+    delivers. *Strengthened rev 2.15:* `SIGNED` is necessary but not sufficient — every zone must also be **validated**,
+    which needs a DS record in the parent zone that only the registrar can publish (§5.6.1). Check both halves:
+    `dig +dnssec <zone> @1.1.1.1` must return the `ad` flag, not merely `dig DNSKEY` returning keys. All three zones
+    were signed-but-unvalidated from the migration until 2026-08-23, and nothing in this list caught it.
 12. `kenesparta.dev/tf` is deleted and the application repository contains no Terraform.
 13. Monthly cost is under $25 as shown in AWS Cost Explorer after a full billing cycle.
 14. `free -m` on the host shows swap unused and no container has been OOM-killed (`dmesg | grep -i oom`) after a week
