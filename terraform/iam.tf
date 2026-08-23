@@ -46,10 +46,12 @@ resource "aws_iam_role" "github_actions_deploy" {
           StringEquals = {
             "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
           }
+          # typst-resume ONLY (AD-5). kenesparta.dev was removed 2026-08-23:
+          # its CI is GHCR-only, and a leftover `sub` entry here would let any
+          # future workflow in that repo assume this role and write the CDN
+          # bucket (that repo's SECURITY.md, SEC-002 follow-up).
           StringLike = {
             "token.actions.githubusercontent.com:sub" = [
-              "repo:kenesparta/kenesparta.dev:ref:refs/heads/main",
-              "repo:kenesparta/kenesparta.dev:ref:refs/tags/*",
               "repo:kenesparta/typst-resume:ref:refs/heads/main",
               "repo:kenesparta/typst-resume:ref:refs/tags/*",
             ]

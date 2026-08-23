@@ -108,7 +108,10 @@ opening port 22 to GitHub's broad, rotating IP ranges.
 
 **Consequence for rev 2:** CI no longer performs a `terraform apply`. The GitHub OIDC role sheds its ECR-push,
 Lightsail-deploy, and Terraform-state policies, retaining only the `cdn.kenesparta.dev` S3 write used by the
-`typst-resume` repository.
+`typst-resume` repository. Its trust policy is scoped to `typst-resume` **alone** (2026-08-23): the
+`kenesparta.dev` `sub` entries were leftovers from before this decision — that repository's CI authenticates to
+GHCR only, and an unused trust grant would have handed any future workflow in it write access to the CDN bucket
+(found by that repo's security audit, its SEC-002 follow-up).
 
 **Rejected:** SSH-based deploy actions, self-hosted runners.
 
