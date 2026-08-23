@@ -67,6 +67,24 @@ The backup path holds **no** credential: the instance is attached to the bucket 
 AWS CLI resolves short-lived credentials from instance metadata (G5, §5.7). This is why the `docker` role installs the
 metadata guard — without it those credentials are readable by every container (G16).
 
+## 9.4a Pre-task assertions on `projects.yml` (rev 2.12)
+
+`site.yml` validates the shared file before any role runs, so a bad entry costs nothing rather than half-configuring
+the host. Three of the checks are worth naming because they encode decisions rather than hygiene:
+
+- **At most four projects** — C3/AD-1. The host is RAM-bound, and the fifth entry is refused here rather than
+  discovered by the OOM killer. As of rev 2.12 there are exactly four.
+- **The ingress set is 0 or 4** — `domain`, `hostname`, `origin`, `port` together or not at all (§5.3 rev 2.12; it
+  was 0-or-3 through rev 2.11, before `domain` existed). A partially-specified entry is a typo whose damage is
+  silent: losing `origin` drops a vhost and its certificate, and losing `domain` puts records in the wrong zone
+  (G24).
+- **A `vault_postgres_passwords` entry per project** — these passwords are the only isolation between projects on the
+  flat `web` network (G15), so a missing one is not a default to fill in.
+
+Ansible does not otherwise use `domain` — Caddy keys its vhost on `origin`, which is already fully qualified. It is
+asserted anyway so that a `projects.yml` which fails `terraform plan` also fails `make configure`, instead of the two
+tools disagreeing about whether the file is valid.
+
 ## 9.5 The Postgres stack
 
 Per AD-3 Postgres is a container on `web`, not an apt package. Consequences the roles must honour:

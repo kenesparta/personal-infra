@@ -31,6 +31,21 @@
   driver — the user's key is minted out of band, never by Terraform (§5.9, AD-11, G21)
 - One-time bootstrap via `user_data`
 
+**Added in rev 2.12 — the `auruming.com` estate (§5.12, AD-13):**
+
+- Route 53 hosted zone `auruming.com`, DNSSEC-signed, with its own key-signing key and its own KMS key
+- ACM certificate (`auruming.com` + `*.auruming.com`) and its DNS validation records, validated in that zone
+- Its CloudFront distribution, alias records and `origin.auruming.com` A record, all generated from `projects.yml`
+  by the same per-project fan-out as every other project — the only new mechanism is `local.domains`
+
+**Added in rev 2.13 — the asset CDN (§5.13):** `cdn.auruming.com` — S3 bucket (`auruming-cdn`, undotted), OAC,
+CloudFront distribution and its alias records in `auruming.com`'s zone. No IAM publishing role: uploads are manual
+under the SSO profile until a producer exists.
+
+Terraform does **not** own the delegation: the domain is registered at Namecheap, so the nameserver change and the
+DS record are manual steps in a registrar dashboard, in the order G23 gives. Nothing in this repository can detect
+that they have not been done — `terraform plan` is clean either way.
+
 **Destroyed:**
 
 - Lightsail Container Service and its deployment version

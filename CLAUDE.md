@@ -10,14 +10,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-**The migration is complete — all phases 0–9 (2026-07-27).** The instance serves two web projects in production:
-`kenesparta.dev` (blog) and `api.kenesparta.dev` (budget API — backend of the iOS app; formerly the budget Telegram
-bot at `bot.kenesparta.dev`, rev ≤2.5), each behind its own CloudFront distribution →
-Caddy (Let's Encrypt) → container, with data restored into the host Postgres. A third project, `cnayp_discord_bot`, is
+**The migration is complete — all phases 0–9 (2026-07-27).** The instance serves three web projects in production:
+`kenesparta.dev` (blog), `api.kenesparta.dev` (budget API — backend of the iOS app; formerly the budget Telegram
+bot at `bot.kenesparta.dev`, rev ≤2.5) and `auruming.com` (rev 2.12), each behind its own CloudFront distribution →
+Caddy (Let's Encrypt) → container, with data restored into the host Postgres. A fourth project, `cnayp_discord_bot`, is
 **headless** (rev 2.10): a Discord gateway bot holding an outbound WSS connection, with no hostname, no origin, no
 Caddy vhost and no certificate — see `projects.yml` below. Its Terms of Service and Privacy Policy are a separate
-static site at `cnayp-bot.kenesparta.dev` (S3 + CloudFront, rev 2.11), deliberately not served by the bot. The old
-estates are gone: the container
+static site at `cnayp-bot.kenesparta.dev` (S3 + CloudFront, rev 2.11), deliberately not served by the bot.
+
+**`auruming.com` (rev 2.12) is the fourth project and the SECOND REGISTERED DOMAIN** — a Leptos/Axum site from
+`../../Agro/auruming.com`, same shape as the blog. It has its own Route 53 zone, its own DNSSEC key-signing key and
+its own ACM certificate (AD-13, spec §5.12); `projects.yml` entries now carry a `domain:` field and the per-project
+fan-out resolves zone + certificate through `local.domains`. `kenesparta.dev`'s resource addresses were NOT moved to
+build that map — it references them (AD-9, G10). The domain is registered at **Namecheap**, so its delegation and DS
+record are manual, ordered, registrar-side steps that no plan can see (G23); `make dns/auruming` prints both values.
+With it the host is at **four of four services (C3)** — there is no fifth slot at `small_3_0`.
+
+The old estates are gone: the container
 services, ECR repositories, managed database, `../kenesparta.dev/tf` and `../budget-assistant/deploy/tf` are all
 destroyed or deleted; this repository's state (`s3://tf.kenesparta.dev/infra/prod/terraform.tfstate`) is the account's
 only live Terraform. The host is Ubuntu-Pro-attached and CIS Level 1 hardened — via the **G18-tailored profile only**,
@@ -26,7 +35,7 @@ never bare `usg fix cis_level1_server`. The backup path is proven end-to-end: du
 row-for-row parity. The final pre-migration dumps live at `s3://kenesparta-infra-backups/managed-db-final/`; the
 pre-hardening rollback snapshot is `pre-harden-2026-07-27`.
 
-Read `spec/` before touching anything — it is rev 2.11 and records decisions that reverse parts of earlier revisions;
+Read `spec/` before touching anything — it is rev 2.12 and records decisions that reverse parts of earlier revisions;
 `spec/10-phases.md` carries as-executed annotations where reality diverged from the plan.
 
 ## `spec/` is the source of truth
@@ -87,14 +96,19 @@ Per-project distributions cost nothing extra — CloudFront bills per request an
 `vars_files`. It drives origin DNS records, CloudFront distributions, Caddy vhosts, Postgres databases, and deploy
 timers together. Adding a project is a five-line change in one file. Never let the two tools carry separate copies.
 
-`hostname`, `origin` and `port` are the **ingress set**: optional, but only *as a set* (spec §5.3 rev 2.10). Omitting
-all three makes a project **headless** — no distribution, no alias records, no origin A record, no vhost, no
-certificate — which is what `cnayp_discord_bot` is. `name`, `image` and `database` stay mandatory. `site.yml` asserts
-all-three-or-none rather than defaulting the gap: an entry that lost its `origin` to a typo would silently stop getting
-a vhost and a cert, and on an HSTS-preloaded domain (G7) that is an outage found by a user. Absence is the marker;
-there is deliberately no `public:` flag. In Terraform the two subsets are `local.origin_projects` (has an `origin`;
-includes blog) and `local.edge_projects` (has a `hostname`; excludes blog) — never read `each.value.hostname` off
-`local.projects`, which is heterogeneous by design.
+`domain`, `hostname`, `origin` and `port` are the **ingress set**: optional, but only *as a set* (spec §5.3 rev 2.12;
+it was three fields before `domain` existed). Omitting all four makes a project **headless** — no distribution, no
+alias records, no origin A record, no vhost, no certificate — which is what `cnayp_discord_bot` is. `name`, `image`
+and `database` stay mandatory. `site.yml` asserts all-four-or-none rather than defaulting the gap: an entry that lost
+its `origin` to a typo would silently stop getting a vhost and a cert, and on an HSTS-preloaded domain (G7) that is an
+outage found by a user. Absence is the marker; there is deliberately no `public:` flag. In Terraform the two subsets
+are `local.origin_projects` (has an `origin`; includes blog) and `local.edge_projects` (has a `hostname`; excludes
+blog) — never read `each.value.hostname` off `local.projects`, which is heterogeneous by design.
+
+**`domain` selects the zone AND the certificate**, through `local.domains` (AD-13). Never `local.zone_id` in a
+per-project resource — that local now means "kenesparta.dev's zone" and is correct only for that domain's own
+validation records, the mail records, the CDN and the legal-pages site. `domain` is never *derived* from `hostname`:
+a suffix match would turn a hostname typo into a record in another domain's zone.
 
 The Terraform→Ansible handoff is a generated `ansible/inventory/hosts.ini` written by `make inventory` from
 `terraform output -raw static_ip`. Deliberately *not* a Terraform `local_file` resource — that would couple
@@ -111,6 +125,7 @@ make vault/create  # ansible/group_vars/vault.yml from the committed template
 make inventory     # regenerate ansible/inventory/hosts.ini from terraform output
 make configure     # ansible-playbook site.yml   (all host config except hardening)
 make harden        # ansible-playbook harden.yml (deliberate, never part of site.yml)
+make dns/auruming  # nameservers + DS record to paste into Namecheap (G23)
 make syntax        # parse both playbooks without touching the host
 ```
 
@@ -147,6 +162,24 @@ Failure modes that are not obvious from any single file (`spec/12-gotchas.md`):
   available, and it is application-layer, not network-layer.
 - **The origin secret is a two-sided rotation.** It lives in Terraform state (`custom_header`) and Ansible Vault (the
   Caddy comparison). Change Terraform first, then Ansible — the reverse order 403s every request in the gap.
+- **Never run bare `terraform` — always `make`** (G25). The Makefile `-include`s `terraform/.env`, which is the only
+  thing that sets `TF_VAR_aws_sso_profile`. Without it the provider gets `profile = null` and the SDK falls through to
+  the `[default]` profile in `~/.aws/credentials`, whose static keys are dead — and it fails with
+  `InvalidClientTokenId`, which reads exactly like an expired SSO session and sends you to `make login`, which fixes
+  nothing. `aws sts get-caller-identity --profile "$TF_VAR_aws_sso_profile"` succeeding while terraform fails is the
+  tell. A one-off `-target` operation gets its own Makefile target rather than a documented raw command.
+- **`auruming.com`'s delegation and DS record are not Terraform's** (G23). It is registered at Namecheap. Terraform
+  creates and signs the zone, and none of that is visible to the internet until four nameservers are pasted into the
+  registrar; `terraform plan` is clean either way, which makes this the one place a green plan does not mean a working
+  system. Two ordering traps: a full `apply` before delegation blocks on `aws_acm_certificate_validation` until it
+  times out (create the zone with `-target` first), and publishing the **DS record** before signing is live and
+  delegated makes the domain SERVFAIL — not "wrong answer", *no* answer — for every validating resolver, clearing on
+  the registry's TTL rather than yours. DS goes last, always. `make dns/auruming` prints both values in order.
+- **A `domain:` that is valid but wrong applies cleanly and never resolves** (G24). `local.domains` fails the plan on
+  an unknown key, but `hostname: auruming.com` under `domain: kenesparta.dev` is a well-formed request to create that
+  record inside the wrong zone, and Route 53 will do it. `site.yml` asserts `hostname`/`origin` sit within `domain`
+  precisely because Terraform cannot. Do not "simplify" this by inferring the zone from the hostname via suffix match
+  — that turns a hostname typo into a record in another domain's zone, which is strictly worse.
 - **Let's Encrypt limits are per registered domain.** The `origin-*` names share `kenesparta.dev`'s 50-cert weekly
   budget with everything else. Caddy's `/data` volume must persist across container recreation, and `.dev` is
   HSTS-preloaded so a TLS error makes the site unreachable rather than degraded — iterate against LE staging.

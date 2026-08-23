@@ -1,7 +1,7 @@
 # personal-infra
 
 Terraform + Ansible for a single-host application server on AWS Lightsail, and the consolidated Terraform state for the
-whole `kenesparta.dev` AWS account.
+whole AWS account — two registered domains, `kenesparta.dev` and `auruming.com`.
 
 Up to four containerized Rust services share one instance behind Caddy, with a self-hosted PostgreSQL and off-host
 backups. Images are built by GitHub Actions, published to GHCR, and **pulled** by a systemd timer — nothing pushes to
@@ -16,10 +16,20 @@ this host.
 ## Status: migrated — in production
 
 All phases 0–9 were applied and verified on 2026-07-27; [`spec/10-phases.md`](spec/10-phases.md) carries as-executed
-annotations where reality diverged from the plan. The instance serves both projects in production —
-`kenesparta.dev` (blog) and `api.kenesparta.dev` (budget API, backend of the iOS app; through rev 2.5 it was the
-budget Telegram bot at `bot.kenesparta.dev`) — each behind its own CloudFront distribution →
-Caddy (Let's Encrypt) → container, with the data restored into the host Postgres.
+annotations where reality diverged from the plan. The instance serves these projects in production —
+`kenesparta.dev` (blog), `api.kenesparta.dev` (budget API, backend of the iOS app; through rev 2.5 it was the
+budget Telegram bot at `bot.kenesparta.dev`) and `auruming.com` (rev 2.12) — each behind its own CloudFront
+distribution → Caddy (Let's Encrypt) → container, with the data restored into the host Postgres. A fourth,
+`cnayp_discord_bot`, is headless: a Discord gateway bot with no hostname, no origin and no certificate.
+
+**`auruming.com` is the second registered domain** (rev 2.12, [AD-13](spec/03-decisions.md)): its own Route 53 zone,
+its own DNSSEC key-signing key, its own ACM certificate. Projects say which domain they belong to with `domain:` in
+`projects.yml`. It is registered at **Namecheap**, so its delegation and its DS record are manual steps in a registrar
+dashboard that Terraform cannot see — the order matters and is [G23](spec/12-gotchas.md). `make dns/auruming` prints
+both values.
+
+With `auruming` the host is at **four of four services** (C3) — the RAM ceiling `small_3_0` was sized for. A fifth
+needs a bundle change, not a `projects.yml` entry.
 
 The old estate is gone: the Lightsail Container Service, the ECR repositories, the managed PostgreSQL and the old
 `../kenesparta.dev/tf` and `../budget-assistant/deploy/tf` directories are destroyed or deleted, and this repository's
@@ -221,10 +231,11 @@ deploy timers — Terraform reads it with `yamldecode`, Ansible with `vars_files
 
 ```yaml
 - name: api
-  hostname: api.kenesparta.dev       # CloudFront alias (already covered by the wildcard ACM cert)
+  domain: kenesparta.dev             # which zone AND which ACM certificate (AD-13)
+  hostname: api.kenesparta.dev       # CloudFront alias, must sit within `domain`
   origin: origin-api.kenesparta.dev  # A → static IP; must resolve DIRECTLY to the box for HTTP-01
   image: ghcr.io/kenesparta/api
-  port: 3001
+  port: 3005
   database: api
 ```
 
@@ -240,10 +251,17 @@ Encrypt certificate; everything else is identical:
     LOG_LEVEL: info                 # not RUST_LOG — this project is Go (log/slog)
 ```
 
-`hostname`, `origin` and `port` are optional **as a set** — all three or none. `site.yml` rejects a half-specified
-entry rather than defaulting the gap, because losing `origin` to a typo would silently drop a vhost and its
-certificate, and `.dev` is HSTS-preloaded (a TLS gap is an outage, not a warning). See
+`domain`, `hostname`, `origin` and `port` are optional **as a set** — all four or none. `site.yml` rejects a
+half-specified entry rather than defaulting the gap, because losing `origin` to a typo would silently drop a vhost and
+its certificate, and `.dev` is HSTS-preloaded (a TLS gap is an outage, not a warning). See
 [`spec/05-resources.md` §5.3](spec/05-resources.md).
+
+`domain` names a **registered domain**, and it is what selects the Route 53 zone and the ACM certificate. It is never
+derived from `hostname`: a suffix match would turn a typo in the hostname into a record in another domain's zone. The
+one mistake nothing can catch is a `domain` that is valid but *wrong* — `hostname: auruming.com` under
+`domain: kenesparta.dev` plans and applies cleanly and simply never resolves, because that zone is not authoritative
+for the name ([G24](spec/12-gotchas.md)). `site.yml` asserts that `hostname` and `origin` sit within `domain`, which
+catches it before anything is created.
 
 Then add its Postgres password to the vault — the one thing that cannot live in `projects.yml`, since that file is
 committed:
@@ -261,6 +279,62 @@ The ceiling is **four services**. RAM is the binding constraint on a 2 GB host: 
 Postgres, ~50 MB Caddy, ~100 MB per service. Growing past four means resizing to `medium_3_0`, which is a stop /
 change-bundle / start on a snapshot — minutes of downtime, no redesign. `site.yml` asserts the ceiling, so adding a
 fifth fails fast instead of discovering it through the OOM killer.
+
+---
+
+## Adding a registered domain (and the `auruming.com` cutover)
+
+A second registered domain is not a second environment — no modules, no second state. It is one zone file, one
+certificate file, and one entry in `local.domains` ([AD-13](spec/03-decisions.md), [§5.12](spec/05-resources.md)):
+
+```hcl
+# terraform/locals.tf
+domains = {
+  (var.primary_dns)  = { zone_id = ..., certificate_arn = ... }
+  (var.auruming_dns) = { zone_id = ..., certificate_arn = ... }
+}
+```
+
+Every per-project record and every per-project distribution resolves its zone and its certificate through that map, so
+nothing else in the fan-out needs to know a domain exists.
+
+**The part Terraform cannot do.** `auruming.com` is registered at Namecheap, so the delegation and the DNSSEC DS record
+are typed into a registrar dashboard by hand. `terraform plan` is clean whether or not they have been — this is the one
+place in the repo where a green plan does not mean a working system. Order matters ([G23](spec/12-gotchas.md)):
+
+```bash
+make login                        # SSO expires; every step below needs it
+
+# 1. Create the zone alone — a full apply would block on certificate validation,
+#    which cannot succeed before the domain is delegated here.
+make dns/auruming-zone
+
+# 2. Read the four nameservers.
+make dns/auruming
+
+# 3. Namecheap → Domain → Nameservers → Custom DNS. Paste them, then wait:
+dig +short NS auruming.com
+
+# 4. Now the rest applies — the certificate validates and the distribution comes up.
+make plan && make apply
+
+# 5. Read the DS record, now that signing is active.
+make dns/auruming
+
+# 6. Namecheap → Domain → Advanced DNS → DNSSEC. Paste it. THIS STEP LAST.
+dig +dnssec auruming.com          # expect `ad` in the flags
+```
+
+Step 6 is the only dangerous one. Once a DS is published, validating resolvers *require* a good signature — publish it
+over an unsigned or undelegated zone and the domain is SERVFAIL, not merely wrong, for everyone behind one. It also
+clears on the **registry's** TTL rather than yours, so the mistake is slow to undo. Do it after step 4 has applied and
+`aws_route53_hosted_zone_dnssec.auruming` reports signing active, and never before.
+
+Reversing the whole thing is step 3 backwards — but only after the DS is removed *and has expired*.
+
+Then the project itself, which is the ordinary three-step ordering every new project needs
+([G22](spec/12-gotchas.md)): `terraform apply` for the CloudWatch log group, `make vault/edit` for its Postgres
+password, `docker push` so the image exists — and only then `make configure`.
 
 ---
 
@@ -416,6 +490,8 @@ key of every committed version, and `secrets/rotate` (a *new* data key) is what 
 | `projects.yml`            | The project fan-out, shared by both tools                                                     |
 | `terraform/main.tf`       | The instance, static IP, firewall, snapshots                                                  |
 | `terraform/cloudfront.tf` | Per-project distributions and the origin-secret header                                        |
+| `terraform/dns-auruming.tf` | `auruming.com` — zone, DNSSEC, its own KMS key (§5.12)                                     |
+| `terraform/acm-auruming.tf` | `auruming.com` — certificate and validation records (§5.12)                                |
 | `terraform/static-cdn.tf` | `cdn.kenesparta.dev` — bucket, distribution, the split cache policies (G19)                   |
 | `terraform/snapshot-weekly.tf` | Sunday snapshot Lambda + EventBridge rule; the add-on is disabled (G20)                  |
 | `terraform/storage.tf`    | The backup bucket — its access key deliberately not in state                                  |

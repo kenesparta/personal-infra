@@ -25,6 +25,7 @@ vault_postgres_passwords:
   blog: ""
   budget: ""
   cnayp_discord_bot: ""
+  auruming: ""
 
 # Secret env vars merged into each project's `.env` by the deploy role, keyed by
 # `name` in projects.yml. Non-secret values belong in that file's `env` map
@@ -49,6 +50,12 @@ vault_postgres_passwords:
 #                     is no alarm at this scale, so check `docker logs` after
 #                     the first start rather than assuming a quiet box is a
 #                     working one.
+#
+# auruming (rev 2.12 — the auruming.com site, §5.12): deliberately ABSENT. It
+# needs no secret env at all. Its DATABASE_URL is assembled by the deploy role
+# from vault_postgres_passwords.auruming, its LEPTOS_* layout variables are
+# baked into the image, and LEPTOS_SITE_ADDR / RUST_LOG are non-secret and live
+# in projects.yml. Add a key here only when the app grows a real credential.
 vault_project_env:
   budget:
     GEMINI_API_KEY: ""

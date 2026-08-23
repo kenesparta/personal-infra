@@ -14,3 +14,8 @@ These are fixed inputs, not preferences to be optimized away.
 | C8  | Personal projects; brief downtime acceptable          | Single point of failure is an accepted risk              |
 | C9  | **Route 53 zones and DNSSEC must survive** the move   | No zone is ever destroyed and recreated; see G10         |
 | C10 | `kenesparta.dev/tf` is **retired**, not run in parallel | One state owns the account after cutover; see AD-9      |
+| C11 | **More than one registered domain** is served (rev 2.12) | Zone, DNSSEC key and certificate are per domain, never shared; see AD-13 |
+
+*Rev 2.12:* **C3 is now met exactly** — `blog`, `budget`, `cnayp_discord_bot` and `auruming` are four of four. There
+is no fifth slot at `small_3_0`, and §9's pre-task refuses one. Growing past four is a bundle change on a snapshot
+(AD-1), not a `projects.yml` edit.

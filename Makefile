@@ -21,7 +21,8 @@ ifneq ($(strip $(TF_VAR_aws_sso_profile)),)
 BACKEND_PROFILE := -backend-config="profile=$(TF_VAR_aws_sso_profile)"
 endif
 
-.PHONY: help login fmt validate init plan apply state/seed plan/phase0 \
+.PHONY: help login fmt validate init plan apply output state/seed plan/phase0 \
+        dns/auruming dns/auruming-zone \
         deps inventory configure harden check-ssh syntax \
         vault/create vault/edit vault/view vault/check \
         secrets/show secrets/keys secrets/get secrets/edit secrets/set secrets/unset secrets/check \
@@ -60,6 +61,52 @@ output: ## print one output — make output NAME=cnayp_bot_site_role_arn (no NAM
 	@# -raw so the value can be piped or pasted straight into a GitHub secret.
 	@# No output is ever a secret (spec §8), so this needs no guard.
 	@if [ -n "$(NAME)" ]; then $(TF) output -raw $(NAME); echo; else $(TF) output; fi
+
+# ── Registrar handoff (G23) ──────────────────────────────────────────────────
+
+dns/auruming-zone: init ## G23 step 1 — create the auruming.com zone ALONE (before the registrar delegation exists)
+	@# -target is normally a smell, and Terraform says so on every run. It is
+	@# correct here and only here: aws_acm_certificate_validation.auruming polls
+	@# until its CNAME resolves PUBLICLY, which cannot happen until Namecheap
+	@# delegates to nameservers that do not exist yet. A full apply therefore
+	@# blocks for 20 minutes and fails. This creates the zone so its nameservers
+	@# can be read, and nothing else.
+	@#
+	@# Goes through make, not bare terraform: terraform/.env carries the SSO
+	@# profile, and without it the provider falls through to the [default]
+	@# profile in ~/.aws/credentials and fails with InvalidClientTokenId.
+	@echo "G23 step 1 — creating the auruming.com hosted zone only."
+	@echo "Next: make dns/auruming, then paste the nameservers into Namecheap."
+	@echo ""
+	@$(TF) apply -target=aws_route53_zone.auruming
+
+dns/auruming: ## print the nameservers + DS record to paste into Namecheap (spec §5.12, G23)
+	@# auruming.com is registered at Namecheap, so the delegation and the DNSSEC
+	@# DS record are manual. Neither value is a secret (spec §8) — both are
+	@# published in the public DNS by design.
+	@echo ""
+	@echo "auruming.com — registrar handoff (G23). Do these IN ORDER."
+	@echo ""
+	@echo "STEP 3  Namecheap > Domain > Nameservers > Custom DNS"
+	@echo "        Paste these four, then wait for: dig +short NS auruming.com"
+	@echo ""
+	@$(TF) output -json auruming_nameservers 2>/dev/null \
+	  | tr -d '[]" ' | tr ',' '\n' | sed '/^$$/d;s/^/          /' \
+	  || echo "          (not applied yet — run: terraform apply -target=aws_route53_zone.auruming)"
+	@echo ""
+	@echo "STEP 6  Namecheap > Domain > Advanced DNS > DNSSEC        *** LAST ***"
+	@echo "        Only after step 4 applied and signing is ACTIVE. A DS record"
+	@echo "        published over an unsigned or undelegated zone is SERVFAIL for"
+	@echo "        every validating resolver, and it clears on the REGISTRY's TTL,"
+	@echo "        not yours."
+	@echo ""
+	@$(TF) output -raw auruming_ds_record 2>/dev/null | sed 's/^/          /' \
+	  || echo "          (not applied yet)"
+	@echo ""
+	@echo ""
+	@echo "        Verify:  dig +dnssec auruming.com          (expect 'ad' in flags)"
+	@echo "                 https://dnsviz.net/d/auruming.com/dnssec/"
+	@echo ""
 
 # ── Phase 0: state consolidation (AD-9) ──────────────────────────────────────
 

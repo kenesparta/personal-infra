@@ -61,22 +61,53 @@
         label: "{{ item.name }}"
 
     - name: Require the ingress fields to be all present or all absent
-      # spec §5.3 rev 2.10 — hostname/origin/port are optional as a SET. A
-      # project with none of them is headless (the Discord gateway bot): no
+      # spec §5.3 rev 2.12 — domain/hostname/origin/port are optional as a SET.
+      # A project with none of them is headless (the Discord gateway bot): no
       # CloudFront distribution, no vhost, no certificate. A project with SOME
       # of them is a typo, and the damage is silent — losing `origin` alone
       # would quietly drop the vhost and its Let's Encrypt certificate, and on
       # an HSTS-preloaded domain (G7) that is an outage, not a warning. So it is
       # rejected here rather than defaulted.
+      #
+      # `domain` joined the set in rev 2.12 (AD-13). Ansible itself never reads
+      # it — Caddy keys its vhost on `origin`, which is already fully qualified
+      # — but Terraform resolves the project's zone AND its ACM certificate
+      # through it, so a projects.yml that would fail `terraform plan` must also
+      # fail `make configure`. Two tools, one file, one verdict on validity.
       ansible.builtin.assert:
         quiet: true
         that:
-          - (item.keys() | select('in', ['hostname', 'origin', 'port']) | list | length) in [0, 3]
+          - (item.keys() | select('in', ['domain', 'hostname', 'origin', 'port']) | list | length) in [0, 4]
         fail_msg: >-
           Project '{{ item.name }}' declares only part of the ingress set. Give
-          `hostname`, `origin` and `port` together, or omit all three to make it
-          headless.
+          `domain`, `hostname`, `origin` and `port` together, or omit all four
+          to make it headless.
       loop: "{{ projects }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Require every public name to sit within the domain it declares
+      # G24 — the one failure Terraform CANNOT catch. `hostname: auruming.com`
+      # under `domain: kenesparta.dev` is a perfectly well-formed request to
+      # create a record named auruming.com inside the kenesparta.dev zone, and
+      # Route 53 will happily do it: clean plan, clean apply, and a name that
+      # never resolves because that zone is not authoritative for it.
+      #
+      # Checking it here is cheap and catches the typo at the same moment the
+      # rest of projects.yml is validated. A suffix match is safe in THIS
+      # direction — asserting a stated relationship — where using one to INFER
+      # the domain would not be (that is the rejected alternative in G24).
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - item.hostname == item.domain or item.hostname.endswith('.' ~ item.domain)
+          - item.origin == item.domain or item.origin.endswith('.' ~ item.domain)
+        fail_msg: >-
+          Project '{{ item.name }}' declares domain '{{ item.domain }}' but
+          hostname '{{ item.hostname }}' / origin '{{ item.origin }}' is not
+          within it. Records would be created in the wrong zone and the name
+          would never resolve (G24).
+      loop: "{{ projects | selectattr('domain', 'defined') | list }}"
       loop_control:
         label: "{{ item.name }}"
 

@@ -16,9 +16,12 @@ personal-infra/
 │   ├── variables.tf
 │   ├── locals.tf                # common_tags, zone_id, projects fan-out
 │   ├── main.tf                  # instance, key pair, static IP, firewall
-│   ├── dns.tf                   # zones, DNSSEC, KMS
+│   ├── dns.tf                   # kenesparta.dev + kecc.link zones, DNSSEC, KMS
 │   ├── dns-records.tf           # Proton mail + Discord records
-│   ├── acm.tf                   # certificate + validation
+│   ├── acm.tf                   # kenesparta.dev certificate + validation
+│   ├── dns-auruming.tf          # auruming.com zone, DNSSEC, KMS (§5.12)
+│   ├── acm-auruming.tf          # auruming.com certificate + validation (§5.12)
+│   ├── static-cdn-auruming.tf   # cdn.auruming.com asset bucket + distribution (§5.13)
 │   ├── cloudfront.tf            # app distribution + apex alias
 │   ├── static-cdn.tf            # cdn.kenesparta.dev bucket + distribution
 │   ├── static-cnayp-bot.tf      # cnayp-bot.kenesparta.dev legal pages (§5.11)
@@ -48,3 +51,8 @@ personal-infra/
 
 Flat within each stage, no Terraform modules and no Ansible collections. Both are premature for a single environment
 with one host; introduce them when a second environment exists.
+
+*Rev 2.12:* a second **registered domain** is not a second environment. `auruming.com` gets its own pair of files
+rather than a module, for the same reason: one host, one state, one environment. The `-auruming` suffix is the
+convention for any further domain — a diff that touches only `*-auruming.tf` is visibly not touching the zone that
+carries mail (G10).

@@ -45,6 +45,38 @@ variable "link_dns" {
   default = "kecc.link"
 }
 
+# ── Second registered domain (rev 2.12, AD-13) ───────────────────────────────
+# NOT a subdomain of primary_dns and not a tag value — this is a key in
+# local.domains, matched verbatim against `domain:` in projects.yml. Changing it
+# without changing that file breaks the lookup at plan time (loudly, which is
+# the intent — G24).
+#
+# Registered at NAMECHEAP, not Route 53. Terraform creates and signs the zone;
+# the nameserver delegation and the DNSSEC DS record are pasted into the
+# registrar by hand, in the order G23 gives, and nothing here can tell whether
+# that has been done.
+variable "auruming_dns" {
+  type    = string
+  default = "auruming.com"
+}
+
+# Static asset CDN for auruming.com (§5.13). Deliberately NOT dotted: a name
+# like "cdn.auruming.com" puts extra labels into the S3 REST endpoint, where
+# the *.s3.<region>.amazonaws.com certificate covers only one. Nobody sees this
+# name — the public one is the CloudFront alias.
+variable "auruming_cdn_bucket_name" {
+  description = "S3 bucket behind cdn.auruming.com. Globally unique across all of S3; change if the default is taken."
+  type        = string
+  default     = "auruming-cdn"
+
+  validation {
+    # Same rule as backup_bucket_name: lowercase alphanumeric and hyphens, no
+    # dots, start and end alphanumeric.
+    condition     = can(regex("^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$", var.auruming_cdn_bucket_name))
+    error_message = "auruming_cdn_bucket_name must be lowercase alphanumeric or hyphen, starting and ending alphanumeric, and must contain no dots (§5.13)."
+  }
+}
+
 
 # ── Instance (Phase 1) ───────────────────────────────────────────────────────
 

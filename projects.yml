@@ -12,18 +12,25 @@
 #   image     GHCR image, pulled by the systemd timer (AD-10)
 #   database  Postgres database + role name
 #
-# The ingress set — hostname/origin/port — is OPTIONAL, but only as a SET. Give
-# all three or none; site.yml rejects a half-specified entry (spec §5.3 rev
-# 2.10). Omitting them makes the project HEADLESS: no CloudFront distribution,
-# no alias records, no origin A record, no Caddy vhost, no Let's Encrypt cert.
+# The ingress set — domain/hostname/origin/port — is OPTIONAL, but only as a
+# SET. Give all four or none; site.yml rejects a half-specified entry (spec
+# §5.3, rev 2.12; it was three fields before `domain` existed in rev 2.10).
+# Omitting them makes the project HEADLESS: no CloudFront distribution, no alias
+# records, no origin A record, no Caddy vhost, no Let's Encrypt cert.
 #
-#   hostname  public name; becomes a CloudFront alias (must be covered by the ACM cert)
+#   domain    the REGISTERED domain these names live in. Selects the Route 53 zone
+#             AND the ACM certificate via local.domains (AD-13). Not derived from
+#             `hostname`: a suffix match would silently move records between zones.
+#             `hostname` and `origin` must both sit within it — nothing checks
+#             this, and the symptom of getting it wrong is NXDOMAIN (G24).
+#   hostname  public name; becomes a CloudFront alias (must be covered by `domain`'s cert)
 #   origin    A record -> static IP; Caddy vhost + Let's Encrypt cert (must resolve
 #             DIRECTLY to the instance so HTTP-01 can succeed — see AD-8)
 #   port      container port Caddy proxies to
 
 projects:
   - name: blog
+    domain: kenesparta.dev
     hostname: kenesparta.dev
     origin: origin.kenesparta.dev
     image: ghcr.io/kenesparta/kenespartadev
@@ -40,6 +47,7 @@ projects:
   # does. `origin` keeps its old name on purpose: renaming it would burn a new
   # Let's Encrypt cert (G8) for a name no user ever sees.
   - name: budget
+    domain: kenesparta.dev
     hostname: api.kenesparta.dev
     origin: origin-bot.kenesparta.dev
     image: ghcr.io/kenesparta/budget-bot
@@ -75,3 +83,36 @@ projects:
       # Not a secret, so it belongs here rather than in the vault: a guild id
       # is visible to every member of that server and grants nothing on its own.
       DISCORD_GUILD_ID: "1461104432530854072"
+
+  # auruming.com — the SECOND registered domain (spec §5.12, AD-13, rev 2.12).
+  # Everything public about it is the ordinary AD-8 chain; what is new is that
+  # its names resolve in their OWN Route 53 zone and ride their OWN ACM
+  # certificate, selected by `domain` below. Terraform reads that field through
+  # local.domains; a value naming no known zone fails the plan, a value naming
+  # the WRONG known zone applies cleanly and never resolves (G24).
+  #
+  # Port 3002. Not 3000 (blog holds it, and site.yml asserts ports are unique)
+  # and deliberately not 3001, which is Leptos's DEFAULT reload port: the app's
+  # shell renders <AutoReload>, so a build that lost LEPTOS_ENV=PROD would ship
+  # a live-reload websocket script pointing at reload_port on every page. With
+  # site_addr == reload_port that failure reads as the site talking to itself.
+  # Nothing publishes this port (acceptance criterion 9) — Caddy upstream only.
+  #
+  # THIS IS C3's FOURTH AND LAST SLOT. A fifth entry is refused by site.yml, and
+  # rightly: ~350 MB OS+Docker + ~400 MB Postgres + ~50 MB Caddy + 4 × ~100 MB is
+  # ~1.2 GB of 2 GB (AD-1). Growing needs medium_3_0 on a snapshot.
+  #
+  # The LEPTOS_* variables the container actually needs (OUTPUT_NAME, SITE_ROOT,
+  # SITE_PKG_DIR, ENV) are baked into the image as ENV — they describe the image
+  # layout, not the deployment, and getting them wrong serves a blank page with
+  # no error. Only the two that are genuinely deployment-facing live here.
+  - name: auruming
+    domain: auruming.com
+    hostname: auruming.com
+    origin: origin.auruming.com
+    image: ghcr.io/kenesparta/auruming
+    port: 3002
+    database: auruming
+    env:
+      LEPTOS_SITE_ADDR: "0.0.0.0:3002"
+      RUST_LOG: info

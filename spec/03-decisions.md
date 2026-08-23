@@ -290,3 +290,71 @@ why the IP needs the function at all.
   cache policy or ORP references them, which is the same circularity, and a silent-absence failure mode if the
   `allExcept` ORP doesn't count as "all viewer headers". Only `event.viewer.ip` is unconditionally present, which is
   why the function carries the IP and nothing else (rev 2.9).
+
+## AD-13 — A second registered domain gets its own zone, its own DNSSEC key and its own certificate; projects name the domain they belong to (rev 2.12)
+
+`auruming.com` is a **separate registered domain**, not another label under `kenesparta.dev`. It is added as a
+parallel estate — its own Route 53 hosted zone, its own KMS key-signing key, its own DNSSEC signing, its own ACM
+certificate — and the per-project edge fan-out (§5.3) stops assuming there is only one of each.
+
+The seam is a single local map, `local.domains`, keyed by registered domain:
+
+```hcl
+locals {
+  domains = {
+    (var.primary_dns)  = { zone_id = ..., certificate_arn = ... }   # kenesparta.dev
+    (var.auruming_dns) = { zone_id = ..., certificate_arn = ... }   # auruming.com
+  }
+}
+```
+
+and a new **required-with-ingress** field in `projects.yml`:
+
+```yaml
+- name: auruming
+  domain: auruming.com            # which zone/certificate this project's names live in
+  hostname: auruming.com
+  origin: origin.auruming.com
+```
+
+Everything downstream — the origin `A` record, the per-project distribution's `viewer_certificate`, the `hostname`
+alias records — reads `local.domains[each.value.domain]` instead of `local.zone_id` and
+`aws_acm_certificate.kenesparta_cert.arn`. Adding a third domain later is a zone file, a certificate file, and one
+map entry; adding a project to an existing domain stays the five-line `projects.yml` change it always was.
+
+**Rationale:** the two hard-coded references were the only thing tying the generic fan-out to one domain, and both
+are lookups, not structure. Replacing them with a map keeps every existing resource **address** untouched, which
+matters more here than tidiness: these are DNSSEC-signed zones whose recreation costs mail delivery (C9, G10) and
+KMS keys that enter a 7-day deletion window on destroy. A refactor that cannot be wrong is worth more than a
+refactor that is elegant.
+
+`kenesparta.dev`'s own resources are therefore **not** folded into the map's generation — the map *references* them.
+`local.domains` is a lookup table over resources declared longhand, not a `for_each` that owns them.
+
+**Rejected:**
+
+- *Adding `auruming.com` + `*.auruming.com` as SANs on the existing `kenesparta_cert`* — one certificate, no new
+  files, and superficially the smallest change. It fails on renewal: ACM revalidates **every** name on a certificate,
+  so a lapse in either domain's DNS blocks reissue for both, and the blog's certificate would then depend on a
+  registrar account for an unrelated domain. It also puts both domains' names in one public certificate, linking two
+  estates that have no reason to be linked. `create_before_destroy` on a SAN change means a full reissue and
+  revalidation of the existing names too — on a live, HSTS-preloaded domain (G7).
+- *Generalizing `dns.tf` and `acm.tf` into a `for_each` over a `domains` map* — the clean end state, and the one a
+  greenfield repo should have. Here it renames `aws_route53_zone.kenespartadev`, both key-signing keys, both KMS
+  keys, the certificate and its validation records, requiring ~10 `moved` blocks to apply without destroying
+  anything. A `moved` block that is wrong, or missing, destroys a signed zone (G10) or schedules a KMS key for
+  deletion. The benefit is that a *fourth* domain is marginally cheaper to add; the cost is risking the two zones
+  that already work. Reconsider only if the domain count reaches a point where longhand actually hurts.
+- *A separate Terraform state for `auruming.com`* — hard isolation, and the answer if these were separate accounts or
+  separate owners. They are neither. The origin `A` record needs `aws_lightsail_static_ip.app.ip_address`, so a split
+  state means a `terraform_remote_state` data source and a cross-state ordering rule for something as ordinary as
+  adding a project. It also breaks C10's invariant — one state owns the account — which is the property that makes
+  `terraform plan` a trustworthy statement about the whole estate.
+- *A `zone`/`cert_arn` pair written directly into each `projects.yml` entry* — removes the map, but puts ARNs and
+  zone ids into a file whose entire purpose is being human-editable and tool-neutral, and duplicates them across
+  every project sharing a domain. The registered domain is the natural key; the resources are Terraform's business.
+- *Defaulting a missing `domain` to `var.primary_dns`* — every existing entry would keep working with no edit. That
+  is exactly the failure mode §5.3 already rejects for the ingress set: a new project under `auruming.com` that
+  forgot the field would silently create its records in the `kenesparta.dev` zone and issue its certificate off the
+  wrong ACM cert, and the first symptom is a name that does not resolve. `domain` joins the ingress set as a
+  fourth all-or-nothing field instead (§5.3 rev 2.12).

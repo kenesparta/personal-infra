@@ -214,3 +214,85 @@ The full ordering for adding a project is therefore three-sided, and only the fi
 fails in the middle of a run that has already changed the host. If the image genuinely is not ready yet, leave the
 project out of `projects.yml` rather than committing an entry that cannot converge — a half-applied `projects.yml` is
 the one state neither tool is designed to sit in.
+
+**G23 — `auruming.com` is registered at Namecheap, so the zone cutover is manual, ordered, and DNSSEC makes the last
+step a foot-gun.** (rev 2.12) Unlike `kenesparta.dev` and `kecc.link`, this domain's registrar is not Route 53.
+Terraform can create the hosted zone, sign it, and write records into it, and **none of that is visible to the
+internet** until the nameservers are changed by hand in the Namecheap dashboard. Two things break if the steps are
+run in the wrong order:
+
+- **`terraform apply` hangs before the delegation.** `aws_acm_certificate_validation` polls until the validation CNAME
+  resolves publicly. Before delegation it never will, so a full apply blocks for its 45-minute timeout and then fails
+  — with the zone, the certificate request and the distribution already created, which is confusing but not harmful.
+- **A DS record published before signing is live is an outage, and a resolver-cached one is a long outage.** Once the
+  DS is at the registrar, validating resolvers *require* a good signature. Publish it while the zone is unsigned, or
+  while the domain still answers from Namecheap's nameservers, and `auruming.com` becomes SERVFAIL — not "wrong
+  answer", but *no* answer — for everyone behind a validating resolver, until the DS expires from their caches.
+
+The order is therefore:
+
+1. `make dns/auruming-zone` — create the zone only (a targeted apply; see G25 for why not bare `terraform`).
+2. `make dns/auruming` — read the four nameservers.
+3. **Namecheap → Domain → Nameservers → Custom DNS** — paste the four. Wait for `dig NS auruming.com` to return them
+   (registry TTL, typically minutes to a few hours).
+4. `make plan && make apply` — the certificate now validates, and the rest of the estate applies normally.
+5. `make dns/auruming` again — read the DS record, now that signing is active.
+6. **Namecheap → Domain → Advanced DNS → DNSSEC** — add the DS. Verify with
+   `dig +dnssec auruming.com` (expect `ad` in the flags from a validating resolver) or
+   `https://dnsviz.net/d/auruming.com/dnssec/`.
+
+Step 6 is the only one that is genuinely dangerous, and it is the only one that can be undone slowly rather than
+quickly: removing a DS record propagates on the registry's TTL, not yours. Do it last, and only after step 4 has
+applied and `aws_route53_hosted_zone_dnssec.auruming` reports `SIGNING`.
+
+Reversing the whole thing is step 3 in reverse (point the nameservers back), but **only after** the DS is removed and
+has expired — a domain delegated away from a signed zone while its DS is still published fails validation exactly as
+in step 6.
+
+**G24 — `local.domains` is the only thing stopping a project's records landing in the wrong zone.** (rev 2.12) Before
+AD-13 there was one zone and one certificate, and `local.zone_id` was correct by construction. Now `domain` in
+`projects.yml` chooses both, and the two failure shapes are asymmetric:
+
+- **A `domain` naming no key in `local.domains`** fails the plan on the map lookup. Loud, early, free.
+- **A `domain` naming the *wrong* known key** succeeds completely: the records are created, the certificate is
+  attached, the plan is clean — and the hostname resolves in a zone that is not authoritative for it, so it does not
+  resolve at all. Nothing in Terraform can catch this, because `hostname: auruming.com` under `domain:
+  kenesparta.dev` is a perfectly well-formed request to create a record named `auruming.com` inside the
+  `kenesparta.dev` zone, which Route 53 will happily do.
+
+So: `hostname` and `origin` must both be within `domain`, this is not machine-checked, and the symptom is NXDOMAIN
+rather than an error. When adding a project, read the three fields together as one line.
+
+Do **not** try to derive the zone from the hostname instead (longest-suffix match over `local.domains`). It looks
+like it removes the field, but it silently changes meaning the day two managed domains are suffixes of one another,
+and it turns a typo in `hostname` into a record in a different domain's zone — trading an explicit field for an
+implicit rule with a worse failure mode.
+
+**G25 — Bare `terraform` picks up the wrong credentials and fails as if SSO had expired.** (rev 2.12) Every Terraform
+operation in this repository goes through `make`, and that is not a style preference. The Makefile does
+`-include terraform/.env`, which exports `TF_VAR_aws_sso_profile`; `versions.tf` then sets
+`profile = var.aws_sso_profile != "" ? var.aws_sso_profile : null`. Run `terraform -chdir=terraform …` directly and
+that variable is `""`, so the provider gets `profile = null` and the AWS SDK falls through its default chain — which
+on this machine finds a **`[default]` profile in `~/.aws/credentials`** holding long-dead static keys.
+
+The error is actively misleading:
+
+```
+Error: Retrieving AWS account details: validating provider credentials:
+retrieving caller identity from STS: … api error InvalidClientTokenId:
+The security token included in the request is invalid.
+```
+
+That reads like an expired SSO session, and the reflex is to run `make login` — which changes nothing, because the
+SSO session was never the problem and is very likely still valid. Confirm with
+`aws sts get-caller-identity --profile "$TF_VAR_aws_sso_profile"`: if that succeeds while `terraform` fails, the
+profile is not reaching the provider and the fix is to invoke it through `make`.
+
+`null` rather than `""` is deliberate in `versions.tf` — an empty string makes `terraform init` fail outright, and CI
+needs the fall-through so its OIDC env credentials are used. The cost of that flexibility is precisely this failure
+mode locally.
+
+So: **no target in this repository should document a bare `terraform` command.** A one-off operation that needs
+`-target` gets a Makefile target of its own (`dns/auruming-zone`), which is also where the justification for
+`-target` belongs — Terraform prints a "resource targeting is in effect" warning on every such run, and a warning
+with no written reason next to it is one people learn to scroll past.

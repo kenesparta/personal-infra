@@ -60,8 +60,9 @@ Two optional fields extend an entry (added in rev 2.3, for `budget`):
   no second copy to rotate (G13).
 
 Each **non-blog** project that declares a `hostname` gets its own CloudFront distribution and alias records generated
-from this file (blog keeps the migrated singleton distribution in `cloudfront.tf`). All of them ride the wildcard ACM
-certificate — `hostname` must stay within `*.kenesparta.dev` (or the apex).
+from this file (blog keeps the migrated singleton distribution in `cloudfront.tf`). Each rides the wildcard ACM
+certificate of the registered domain it names in `domain`, so `hostname` must stay within that domain or its apex
+(rev 2.12 — through rev 2.11 there was one certificate and `hostname` had to be `kenesparta.dev` or a label under it).
 
 *Amended in rev 2.6:* the `budget` project is the **authenticated JSON API** (`api.kenesparta.dev`) backing the iOS
 budget app; through rev 2.5 it was the private Telegram bot at `bot.kenesparta.dev`. The hostname swap is only a
@@ -101,6 +102,33 @@ an outage found by a user rather than by a run. A partially-specified entry fail
 No new field marks a headless project — **absence is the marker**. A `public: false` flag was considered and rejected:
 it would be a second thing to keep in step with the fields it describes, and it can disagree with them, whereas the
 coherence assert already provides the fail-fast property the flag would only restate.
+
+*Amended in rev 2.12 — the `domain` field (AD-13):* a second registered domain, `auruming.com`, now has its own
+zone, its own DNSSEC key and its own certificate (§5.12). A project therefore has to say **which** registered domain
+its names belong to, because `hostname` and `origin` alone cannot be resolved to a zone or a certificate without
+parsing them — and parsing a name to find its zone is exactly the guess this file exists to avoid.
+
+```yaml
+- name: auruming
+  domain: auruming.com              # the registered domain: selects the zone AND the ACM certificate
+  hostname: auruming.com            # CloudFront alias, must sit within `domain`
+  origin: origin.auruming.com       # A record -> static IP, Caddy vhost + LE cert, also within `domain`
+  image: ghcr.io/kenesparta/auruming
+  port: 3002
+  database: auruming
+```
+
+`domain` joins `hostname`, `origin` and `port` as a **fourth member of the ingress set** — all four together, or none
+of them. It is not defaulted to `var.primary_dns`, for the same reason nothing else in the set is defaulted: a
+project under `auruming.com` that lost the field to a typo would create its records in the `kenesparta.dev` zone and
+present the wrong certificate, and the first symptom is a name that does not resolve. §9 asserts `0 or 4`, and
+Terraform's `local.domains` lookup fails the plan on a `domain` that names no known zone. A headless project (rev
+2.10) has no names at all and therefore no `domain`.
+
+Terraform only ever reads `domain` through `local.domains`; Ansible does not read it at all — Caddy's vhost is keyed
+on `origin`, which is already fully qualified. It is asserted on the Ansible side regardless, so that a
+`projects.yml` which would fail `terraform plan` also fails `make configure`, rather than the two tools disagreeing
+about whether the file is valid.
 
 ## 5.4 Instance configuration
 
@@ -146,7 +174,7 @@ migration — only the distribution's origin does. Each project additionally get
 ```hcl
 resource "aws_route53_record" "origin" {
   for_each = local.origin_projects   # rev 2.10 — projects declaring an `origin`, not all of them
-  zone_id  = local.zone_id
+  zone_id  = local.domains[each.value.domain].zone_id   # rev 2.12 — per-domain, not local.zone_id
   name     = each.value.origin
   type     = "A"
   ttl      = 300
@@ -155,7 +183,13 @@ resource "aws_route53_record" "origin" {
 ```
 
 A **headless** project (§5.3 rev 2.10) has no `origin`, so it appears in neither `local.origin_projects` nor
-`local.edge_projects` and produces no DNS record at all. Static sites that are not projects — the CDN (§4) and the
+`local.edge_projects` and produces no DNS record at all.
+
+*Amended in rev 2.12 (AD-13):* there is more than one zone now, so every per-project record resolves its zone through
+`local.domains[each.value.domain]` rather than the single `local.zone_id`. `local.zone_id` survives, unchanged, for
+the things that genuinely are `kenesparta.dev`-only: the ACM validation records for that domain's certificate, the
+Proton mail and Discord records (§5.6 below), the CDN, and the legal-pages site (§5.11). An unknown `domain` is a
+plan-time failure on the map lookup, not a record created in the wrong place. Static sites that are not projects — the CDN (§4) and the
 legal pages (§5.11) — carry their own alias records instead, since they have no instance origin to point at.
 
 ## 5.7 Backup bucket
@@ -333,3 +367,115 @@ bucket plus invalidation on that one distribution. It is deliberately **not** a 
 a Discord bot's CI write access to the CV and the blog's assets — an authorization change made invisibly, by editing a
 list of repository names. Fork pull requests present a `sub` of `repo:...:pull_request`, matching neither pattern, so
 an untrusted PR cannot publish. No access key exists on either side.
+
+## 5.12 The `auruming.com` estate (rev 2.12)
+
+A second registered domain, served by the same host, isolated from `kenesparta.dev` everywhere isolation is free
+(AD-13). The public shape is identical to any other project — the AD-8 chain is unchanged:
+
+```
+auruming.com  →  CloudFront (ACM: auruming.com + *.auruming.com)
+              →  origin.auruming.com  →  Caddy (Let's Encrypt)  →  auruming:3002
+```
+
+What is new is everything *behind* the name:
+
+| Concern              | `kenesparta.dev`                          | `auruming.com`                              |
+|----------------------|-------------------------------------------|---------------------------------------------|
+| Hosted zone          | `aws_route53_zone.kenespartadev`          | `aws_route53_zone.auruming`                 |
+| DNSSEC signing       | own KSK + own KMS key                     | own KSK + own KMS key — no sharing          |
+| ACM certificate      | apex + `*.kenesparta.dev`                 | apex + `*.auruming.com`                     |
+| Let's Encrypt budget | 50/week shared by every `origin-*` name   | its own 50/week (limits are per registered domain — G8) |
+| Registrar            | Route 53                                  | **Namecheap** — see G23                     |
+| Mail                 | Proton (MX/SPF/DKIM/DMARC — §5.6)         | none; no mail records are created           |
+
+**Terraform files.** `dns-auruming.tf` (zone, DNSSEC, KSK, KMS key) and `acm-auruming.tf` (certificate + validation),
+both written longhand in the same shape as `dns.tf` and `acm.tf`. Deliberately separate files rather than appended
+sections: the two estates have independent lifecycles, and a file boundary is the cheapest way to make a diff that
+touches `auruming.com` obviously not touch the zone that carries mail (G10).
+
+**Its DNSSEC key is its own.** A KMS key costs $1/month and Route 53 permits one key-signing key to sign only the
+zone it is attached to, so there was never a sharing option to reject at the AWS level — but the property is worth
+stating: rotating or disabling signing on one domain cannot affect the other, and a KMS key scheduled for deletion
+takes exactly one zone with it.
+
+**Log group naming stays `/kenesparta/<project>`.** The prefix is the *account's* namespace, not the domain's — it is
+a constant shared by `cloudwatch-logs.tf` and `cloudwatch_log_group_prefix` in `group_vars/all.yml` (§5.9), and it is
+matched by the logs-writer IAM policy's `/kenesparta/*` resource scope. Renaming it per-domain would mean a second
+policy statement, a second Ansible variable, and a per-project conditional in the deploy role's Compose template, to
+change a string nobody reads except in the CloudWatch console. `/kenesparta/auruming` it is.
+
+**The apply is two-stage, and the first stage is the registrar's.** `aws_acm_certificate_validation` blocks until the
+CNAME it wrote is publicly resolvable, and nothing under `auruming.com` is publicly resolvable until Namecheap
+delegates to the new Route 53 nameservers. A single `terraform apply` therefore sits and eventually times out. The
+ordering is in G23: `make dns/auruming-zone` creates the zone alone, and `make dns/auruming` prints both values the
+registrar needs.
+
+**Port 3002.** Not 3000, because `blog` holds it and §9's pre-task asserts ports are unique across projects; and
+deliberately not 3001, which is Leptos's **default reload port**. The app's `shell()` renders `<AutoReload>`, which
+emits a live-reload websocket script whenever `LEPTOS_ENV` is `DEV` — so the image sets `LEPTOS_ENV=PROD`, and the
+port is chosen so that a build which ever loses that variable fails visibly against a closed port rather than
+confusingly against its own. The number is container-internal (nothing publishes it — acceptance criterion 9) and
+matters only as a Caddy upstream.
+
+**This is C3's fourth and last service.** `blog`, `budget`, `cnayp_discord_bot`, `auruming` fills the RAM budget AD-1
+sized for `small_3_0`: ~350 MB OS+Docker, ~400 MB Postgres, ~50 MB Caddy, 4 × ~100 MB ≈ 1.2 GB of 2 GB. A fifth
+project is a bundle change to `medium_3_0` on a snapshot, not an entry in `projects.yml`; §9's assert refuses the
+fifth entry rather than letting the OOM killer discover it.
+
+## 5.13 `cdn.auruming.com` — static asset CDN (rev 2.13)
+
+An **asset** CDN for `auruming.com` — images, video and similar media — served from S3 + CloudFront rather than by
+the site container. It is not a website: there is no `default_root_object`, so a request for `/` returns 403→ nothing
+rather than resolving to an `index.html` that was never published. Same reasoning as §5.11: bytes served from S3 cost
+no RAM against AD-1's budget, occupy none of C3's four slots, and stay up when the instance does not. Serving a video
+off a 2 GB shared box is the case where that stops being a nicety.
+
+```
+cdn.auruming.com  →  CloudFront (ACM: *.auruming.com)  →  OAC  →  s3://auruming-cdn
+```
+
+It is the third static site in the estate, and it is shaped after **`static-cnayp-bot.tf`, not `static-cdn.tf`**. That
+distinction is the whole design note:
+
+| | `cdn.kenesparta.dev` | `cdn.auruming.com` | Why |
+|---|---|---|---|
+| Bucket name | `cdn.kenesparta.dev` (dotted) | `auruming-cdn` | Dots add labels to the S3 REST endpoint that the `*.s3.<region>.amazonaws.com` certificate does not cover — a TLS/SigV4 edge case worth not owning. The CDN's dotted name is **inherited** from the pre-migration estate, not a pattern to copy (§5.11). Nobody sees it; the public name is the CloudFront alias. |
+| Public access block | all `false` | all `true` | Also inherited. OAC is the only read path, so no public ACL or policy is ever needed. `block_public_policy` can stay on: a service principal with a `SourceArn` condition is not a *public* policy. |
+| Certificate | referenced directly | via `aws_acm_certificate_validation.auruming` | On a from-zero apply a certificate ARN is known before the certificate is *usable*; referencing the validation resource is what orders the distribution after issuance. The older files predate that concern and their certificates are long since issued. |
+| Immutable behavior | `fonts/*`, `blog/*` | **none — see below** | |
+
+**No immutable cache behavior exists here, deliberately (G19).** The `fonts/*` and `blog/*` behaviors on
+`cdn.kenesparta.dev` are safe only because those paths are filename-versioned and write-once. Creating the equivalent
+on an **empty** CDN would commit a path prefix to a year-long, uninvalidatable browser cache before a single object
+has been published to it — a trap laid for whoever first uploads a stable-name file under `fonts/`. The default
+behavior instead carries `Cache-Control: public, max-age=300` with `override = false`, so a deliberate per-object
+`Cache-Control` set at upload time wins at both the edge (`min_ttl = 0`) and the browser. That is strictly more
+flexible than a path-scoped immutable policy and has no cliff.
+
+Adding an immutable behavior later is a deliberate act with a precondition: the path must be filename-versioned, and
+the objects under it must never be overwritten in place. Rename to replace.
+
+**Cache defaults are tuned for media, not documents.** One day at the browser (`public, max-age=86400`,
+`override = false`) and one day at the edge (`default_ttl`), with `min_ttl = 0` so a deliberately short per-object
+`Cache-Control` still wins, and `max_ttl = 31536000` as headroom for an object that asks for more. Media is replaced
+rarely and deliberately; a day is long enough to be a real cache and short enough that a mistake ages out on its own,
+which is precisely what `immutable` does not do.
+
+**Byte-range requests need no configuration.** Seeking within a video is a ranged `GET`, which CloudFront handles
+against an S3 origin automatically. `allowed_methods` is `GET`/`HEAD`/`OPTIONS`: this distribution serves bytes and
+never accepts them.
+
+**`PriceClass_100` excludes South America.** It matches every other distribution here and is the cheapest tier (C1),
+but for media specifically it is worth knowing that a viewer in Lima is served from a North American edge — a longer
+first byte, not a failure. Only `PriceClass_All` adds South American edges. That is a cost decision, not a
+correctness one, and it is a one-word change.
+
+**CORS is present**, unlike §5.11's legal pages, and scoped to `https://auruming.com` rather than `*`. Plain `<img>`
+and `<video>` tags need no CORS at all; fonts, `fetch`, and canvas-read pixels do, and those are the cases this
+serves. Widen it only if something outside the site is meant to consume these assets.
+
+**Nothing can publish to it yet, on purpose.** No IAM role is created here. Which repository publishes, on which refs,
+is an authorization decision, and §5.11 records why those are made explicitly and one-role-per-repo-per-bucket rather
+than by appending a `sub` to an existing role. Until one exists, uploads are a manual `aws s3 sync` under the SSO
+admin profile, which is appropriate for a CDN with no automated producer.

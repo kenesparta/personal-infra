@@ -19,7 +19,10 @@ data "sops_file" "prod_secrets" {
 resource "aws_route53_record" "origin" {
   for_each = local.origin_projects
 
-  zone_id = local.zone_id
+  # rev 2.12 — NOT local.zone_id. There is more than one zone now, and which one
+  # a project's names belong in is stated by `domain:` in projects.yml, never
+  # inferred from the name (AD-13, G24).
+  zone_id = local.domains[each.value.domain].zone_id
   name    = each.value.origin
   type    = "A"
   ttl     = 300
@@ -184,8 +187,12 @@ resource "aws_route53_record" "apex_cloudfront" {
 # the migrated singleton above, and a headless project (§5.3 rev 2.10) has no
 # public name to alias. CloudFront routes by path, never by Host, so hostnames
 # cannot share a distribution; per-distribution cost is zero (billing is per
-# request/GB). All hostnames ride the wildcard ACM cert, so they must stay under
-# kenesparta.dev.
+# request/GB).
+#
+# rev 2.12 — each distribution rides the wildcard ACM certificate of the
+# registered domain its project NAMES in `domain:`, so a hostname must stay
+# within that domain (AD-13). Through rev 2.11 there was one certificate and one
+# domain, and this comment said hostnames must stay under kenesparta.dev.
 
 resource "aws_cloudfront_distribution" "project" {
   for_each = local.edge_projects
@@ -237,7 +244,7 @@ resource "aws_cloudfront_distribution" "project" {
   }
 
   viewer_certificate {
-    acm_certificate_arn      = aws_acm_certificate.kenesparta_cert.arn
+    acm_certificate_arn      = local.domains[each.value.domain].certificate_arn
     ssl_support_method       = "sni-only"
     minimum_protocol_version = "TLSv1.2_2021"
   }
@@ -253,7 +260,7 @@ resource "aws_cloudfront_distribution" "project" {
 resource "aws_route53_record" "project_hostname_a" {
   for_each = local.edge_projects
 
-  zone_id = local.zone_id
+  zone_id = local.domains[each.value.domain].zone_id
   name    = each.value.hostname
   type    = "A"
 
@@ -267,7 +274,7 @@ resource "aws_route53_record" "project_hostname_a" {
 resource "aws_route53_record" "project_hostname_aaaa" {
   for_each = local.edge_projects
 
-  zone_id = local.zone_id
+  zone_id = local.domains[each.value.domain].zone_id
   name    = each.value.hostname
   type    = "AAAA"
 
