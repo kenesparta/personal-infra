@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<meta http-equiv="refresh" content="60">
+<title>Volvemos enseguida — auruming.com</title>
+<style>
+  /* Todo el CSS va aquí a propósito (G28): esta página se sirve justo cuando el
+     servidor de origen no responde, así que cualquier recurso externo se
+     pediría a ese mismo origen y fallaría igual. */
+  :root {
+    --bg: #fbfaf5; --fg: #1b1d17; --muted: #6a6f5f;
+    --line: #e4e6da; --accent: #4f7a35; --card: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14160f; --fg: #e9ece1; --muted: #9aa08b;
+      --line: #282c20; --accent: #94c46b; --card: #1c1f16;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center;
+    justify-content: center; padding: 24px; background: var(--bg); color: var(--fg);
+    font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  main {
+    width: 100%; max-width: 34rem; background: var(--card);
+    border: 1px solid var(--line); border-radius: 14px; padding: 2.5rem 2rem;
+  }
+  .dot {
+    display: inline-block; width: .5rem; height: .5rem; border-radius: 50%;
+    background: var(--accent); margin-right: .55rem; vertical-align: middle;
+  }
+  .kicker {
+    font-size: .78rem; letter-spacing: .09em; text-transform: uppercase;
+    color: var(--muted); margin: 0 0 1.1rem;
+  }
+  h1 { font-size: 1.6rem; line-height: 1.25; margin: 0 0 .85rem; letter-spacing: -.01em; }
+  p { margin: 0 0 1rem; color: var(--muted); }
+  p.lead { color: var(--fg); }
+  a { color: var(--accent); }
+  .en { font-size: .9rem; }
+  footer {
+    margin-top: 1.75rem; padding-top: 1.15rem; border-top: 1px solid var(--line);
+    font-size: .85rem; color: var(--muted);
+  }
+</style>
+</head>
+<body>
+<main>
+  <p class="kicker"><span class="dot"></span>auruming.com</p>
+  <h1>Volvemos enseguida.</h1>
+  <p class="lead">El sitio no está respondiendo en este momento. Suele ser un reinicio o una actualización,
+     y normalmente dura solo unos minutos.</p>
+  <p>Esta página se actualiza sola cada minuto, así que puedes dejarla abierta. O
+     <a href="/">intentar de nuevo</a>.</p>
+  <p class="en">We&rsquo;ll be back shortly &mdash; the site isn&rsquo;t responding right now. This page retries
+     itself every minute.</p>
+  <footer>
+    <a href="mailto:kenesparta@pm.me">kenesparta@pm.me</a>
+  </footer>
+</main>
+</body>
+</html>

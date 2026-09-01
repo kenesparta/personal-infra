@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Service unavailable — api.kenesparta.dev</title>
+<style>
+  /* Inline only (G28) — the origin that would serve an external asset is the
+     one that just failed. */
+  :root {
+    --bg: #f7f8fa; --fg: #14171c; --muted: #626b78;
+    --line: #e1e5ea; --accent: #2f6feb; --card: #ffffff; --chip: #eef2f7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --fg: #e6e9ee; --muted: #98a1b0;
+      --line: #262b33; --accent: #6ea1ff; --card: #171a20; --chip: #1e222a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center;
+    justify-content: center; padding: 24px; background: var(--bg); color: var(--fg);
+    font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  main {
+    width: 100%; max-width: 34rem; background: var(--card);
+    border: 1px solid var(--line); border-radius: 14px; padding: 2.5rem 2rem;
+  }
+  .kicker {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: .8rem; color: var(--muted); margin: 0 0 1.1rem;
+  }
+  h1 { font-size: 1.5rem; line-height: 1.3; margin: 0 0 .85rem; letter-spacing: -.01em; }
+  p { margin: 0 0 1rem; color: var(--muted); }
+  p.lead { color: var(--fg); }
+  a { color: var(--accent); }
+  pre {
+    background: var(--chip); border: 1px solid var(--line); border-radius: 9px;
+    padding: .85rem 1rem; overflow-x: auto; margin: 0 0 1rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85rem;
+    color: var(--fg);
+  }
+  footer {
+    margin-top: 1.75rem; padding-top: 1.15rem; border-top: 1px solid var(--line);
+    font-size: .85rem; color: var(--muted);
+  }
+</style>
+</head>
+<body>
+<main>
+  <p class="kicker">api.kenesparta.dev</p>
+  <h1>503 &mdash; the API is temporarily unreachable.</h1>
+  <p class="lead">This endpoint is a machine interface; if you are reading this in a browser, you have found
+     the error page rather than the API.</p>
+  <p>The service behind it is not answering &mdash; usually a restart or a deploy. Clients should back off and
+     retry rather than treat this as a permanent failure:</p>
+  <pre>HTTP/1.1 503 Service Unavailable</pre>
+  <footer>
+    Persisting? &mdash; <a href="mailto:kenesparta@pm.me">kenesparta@pm.me</a>.
+  </footer>
+</main>
+</body>
+</html>

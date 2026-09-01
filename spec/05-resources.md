@@ -550,3 +550,47 @@ from any client:
 ```bash
 curl -sS -o /dev/null -D - https://auruming.com | grep -i alt-svc
 ```
+
+## 5.15 Branded origin-failure pages (rev 2.18)
+
+Until rev 2.18 an unreachable origin produced CloudFront's own `504 Gateway Timeout ERROR` page — the AWS wordmark, a
+request ID, and an invitation to "contact the app or website owner". Observed live on `auruming.com` during the
+2026-09-01 reboot window. The app distributions carried **no** `custom_error_response` at all; the only ones in the
+estate were the legal site's 403/404 (§5.11).
+
+**Shape.** One S3 bucket per registered domain, OAC-locked, added as a *second origin* to every app distribution of
+that domain, plus an ordered behavior and three error mappings:
+
+| Piece | Value |
+|---|---|
+| Buckets | `kenesparta-status-pages`, `auruming-status-pages` — undotted, for the reason in §5.11 |
+| Behavior | `/__status/*` → the status origin, cached (min 0 / default 300 / max 3600) |
+| Key layout | `__status/<hostname>/maintenance.html` — one page per site, not one shared page |
+| Mapped codes | 502, 503, 504 → `response_code = 503`, `error_caching_min_ttl = 10` |
+
+**Why 502/503/504 and deliberately not 500.** Those three are what CloudFront emits when it cannot get a usable
+answer *from* the origin — box down, Caddy down, TLS handshake failed, timeout — and replacing them loses nothing,
+because the body was AWS boilerplate either way. A 500 is different: it is the application's own response, carrying
+the application's own body. `api.kenesparta.dev` returns JSON errors to an iOS client, and a `custom_error_response`
+on 500 would replace that JSON with an HTML page for every server-side bug. The line is "CloudFront could not reach
+an application" versus "the application answered".
+
+**Why `error_caching_min_ttl = 10` and not the default.** The default is **300 seconds**. Left alone, the maintenance
+page keeps being served for five minutes *after* the site is healthy — the recovery is invisible and the outage looks
+five minutes longer than it was. Ten seconds is long enough to shield the origin from a retry storm and short enough
+that recovery shows up as fast as a viewer can press reload.
+
+**Why `response_code = 503` and not 200.** 503 is the honest status and the one crawlers treat as "come back later".
+Serving a maintenance page as 200 invites it to be indexed as the site's real content.
+
+**Why one page per hostname.** `projects.yml` describes three public sites with nothing in common but their operator;
+a single shared page would have to be generic enough to be true of all of them, which is how maintenance pages end up
+saying nothing. The pages live in `terraform/status-pages/<hostname>/` and are uploaded by Terraform, not CI — they
+are a few KB, they change roughly never, and they must exist before the outage that needs them.
+
+**Self-contained is a requirement, not a preference.** Every page inlines its CSS and uses no image, font, or script
+from anywhere. An external asset referenced from the maintenance page would be fetched from the same dead origin and
+fail alongside it (G28).
+
+The legal site (§5.11) is deliberately untouched: its origin is S3, so it has no origin to fail, and its existing
+403/404 → `/404.html` mapping already covers the only errors it can produce.

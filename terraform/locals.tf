@@ -31,15 +31,42 @@ locals {
   # Adding a domain: one zone file, one certificate file, one entry here.
   # kecc.link is deliberately ABSENT — it hosts no project and has no
   # certificate, so it has nothing to look up.
+  #
+  # rev 2.18 adds the status bucket (§5.15). It belongs here for the same reason
+  # the certificate does: a project's branded 5xx page must come out of ITS
+  # registered domain's bucket, and `domain:` is the only thing that says which.
   domains = {
     (var.primary_dns) = {
-      zone_id         = aws_route53_zone.kenespartadev.zone_id
-      certificate_arn = aws_acm_certificate.kenesparta_cert.arn
+      zone_id              = aws_route53_zone.kenespartadev.zone_id
+      certificate_arn      = aws_acm_certificate.kenesparta_cert.arn
+      status_bucket_domain = aws_s3_bucket.status_pages.bucket_regional_domain_name
+      status_oac_id        = aws_cloudfront_origin_access_control.status_pages.id
     }
     (var.auruming_dns) = {
-      zone_id         = aws_route53_zone.auruming.zone_id
-      certificate_arn = aws_acm_certificate.auruming.arn
+      zone_id              = aws_route53_zone.auruming.zone_id
+      certificate_arn      = aws_acm_certificate.auruming.arn
+      status_bucket_domain = aws_s3_bucket.status_pages_auruming.bucket_regional_domain_name
+      status_oac_id        = aws_cloudfront_origin_access_control.status_pages_auruming.id
     }
+  }
+
+  # ── Status pages (§5.15) ───────────────────────────────────────────────────
+  # Every PUBLIC hostname mapped to the registered domain whose bucket holds its
+  # page. `blog` is deliberately not in local.edge_projects — it kept the
+  # migrated singleton distribution (AD-9, G10) — so this reads local.projects
+  # and filters on `hostname`, which is exactly the ingress-set marker (§5.3).
+  status_pages = {
+    for n, p in local.projects : p.hostname => p.domain if can(p.hostname)
+  }
+
+  # Which distributions each status bucket must grant OAC reads to. Data-driven
+  # rather than hard-coded project keys: adding a project to projects.yml must
+  # not require remembering to widen a bucket policy by hand.
+  status_distribution_arns = {
+    for d in keys(local.domains) : d => concat(
+      d == local.projects["blog"].domain ? [aws_cloudfront_distribution.app.arn] : [],
+      [for n, p in local.edge_projects : aws_cloudfront_distribution.project[n].arn if p.domain == d]
+    )
   }
 
   cdn_main_bucket = "cdn.${var.primary_dns}"

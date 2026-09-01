@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<!-- Auto-retry. CloudFront caches this response for error_caching_min_ttl (10s),
+     so a page full of viewers reloading does not become a page full of origin
+     requests — the edge collapses them. -->
+<meta http-equiv="refresh" content="60">
+<title>Back shortly — kenesparta.dev</title>
+<style>
+  /* Everything is inline ON PURPOSE (G28): this page is served precisely when
+     the origin cannot answer, so any external stylesheet, font or image would
+     be fetched from the same dead origin and fail alongside it. */
+  :root {
+    --bg: #fbfaf8; --fg: #1c1b19; --muted: #6b6862;
+    --line: #e6e2db; --accent: #8a5a2b; --card: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16151a; --fg: #ece9e4; --muted: #9b968d;
+      --line: #2c2a30; --accent: #d59a5c; --card: #1e1d23;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center;
+    justify-content: center; padding: 24px; background: var(--bg); color: var(--fg);
+    font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  main {
+    width: 100%; max-width: 34rem; background: var(--card);
+    border: 1px solid var(--line); border-radius: 14px; padding: 2.5rem 2rem;
+  }
+  .dot {
+    display: inline-block; width: .5rem; height: .5rem; border-radius: 50%;
+    background: var(--accent); margin-right: .55rem; vertical-align: middle;
+  }
+  .kicker {
+    font-size: .78rem; letter-spacing: .09em; text-transform: uppercase;
+    color: var(--muted); margin: 0 0 1.1rem;
+  }
+  h1 { font-size: 1.6rem; line-height: 1.25; margin: 0 0 .85rem; letter-spacing: -.01em; }
+  p { margin: 0 0 1rem; color: var(--muted); }
+  p.lead { color: var(--fg); }
+  a { color: var(--accent); }
+  footer {
+    margin-top: 1.75rem; padding-top: 1.15rem; border-top: 1px solid var(--line);
+    font-size: .85rem; color: var(--muted);
+  }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85em; }
+</style>
+</head>
+<body>
+<main>
+  <p class="kicker"><span class="dot"></span>kenesparta.dev</p>
+  <h1>The site is having a moment.</h1>
+  <p class="lead">Nothing is lost — the server behind this page just isn&rsquo;t answering right now. It is
+     usually a restart or a deploy, and it usually takes a couple of minutes.</p>
+  <p>This page refreshes itself every minute, so you can leave it open. Or
+     <a href="/">try again now</a>.</p>
+  <footer>
+    If it is still here in a while, something more interesting has gone wrong &mdash;
+    <a href="mailto:kenesparta@pm.me">kenesparta@pm.me</a>.
+  </footer>
+</main>
+</body>
+</html>

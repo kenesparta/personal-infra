@@ -363,3 +363,27 @@ report on a host that needs rebooting.
 
 Same shape as the DNSSEC check in acceptance criterion 11 — the obvious probe returns a reassuring answer to a
 question you did not ask.
+
+**G28 — `response_page_path` is a path *inside the same distribution*, so a custom error page served from the broken
+origin is no page at all.** (rev 2.18) The obvious way to write a maintenance page is one `custom_error_response`
+block naming `/maintenance.html`. It applies cleanly, and it does nothing: `response_page_path` is not a URL, it is a
+URI that CloudFront re-resolves through *its own* cache behaviors. With only the Caddy origin configured, CloudFront
+answers a 504 by fetching `/maintenance.html` from the origin that just failed to answer, fails again, and falls back
+to the generic AWS page — the exact page the change was meant to remove. The failure is silent in the worst way: the
+Terraform plan is clean, the apply succeeds, and the setup is only exercised during an outage, when nobody is reading
+CloudFront configuration.
+
+The page must therefore come from a **second origin that is up when the first is down** — S3 behind OAC, plus an
+`ordered_cache_behavior` whose `path_pattern` matches the error path and targets it (§5.15). Three consequences:
+
+- **The path pattern and the page path must agree.** `path_pattern = "/__status/*"` with
+  `response_page_path = "/maintenance.html"` routes the error page to the *default* behavior — the origin again. This
+  is the same bug wearing a disguise.
+- **Everything the page references is subject to the same rule.** A stylesheet, a font, a logo at any path not
+  covered by the status behavior is fetched from the dead origin. Inline all of it; the pages in
+  `terraform/status-pages/` carry no external reference of any kind.
+- **Test it by breaking the origin, not by reading the plan.** `docker compose stop caddy` on the host produces a real
+  502/504 through the real path. Nothing short of that exercises it.
+
+The same trap explains why the legal site's 403/404 → `/404.html` (§5.11) is *not* an instance of it: that
+distribution's only origin is S3, so the error page and the content share an origin that does not go down.

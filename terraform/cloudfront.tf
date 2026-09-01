@@ -144,6 +144,50 @@ resource "aws_cloudfront_distribution" "app" {
     }
   }
 
+  # ── Origin-failure pages (spec §5.15) ──────────────────────────────────────
+  # A SECOND origin, and that is the whole point (G28). `response_page_path`
+  # below is a URI CloudFront re-resolves through its own behaviors, not a URL:
+  # with only the instance origin configured, CloudFront answers a 504 by
+  # fetching the error page from the origin that just timed out, fails again,
+  # and serves the generic AWS page — the exact page this replaces.
+  origin {
+    origin_id                = "status"
+    domain_name              = local.domains[local.projects["blog"].domain].status_bucket_domain
+    origin_access_control_id = local.domains[local.projects["blog"].domain].status_oac_id
+  }
+
+  # path_pattern and response_page_path MUST agree. A page path outside this
+  # pattern falls through to the default behavior and the dead origin — the
+  # same bug in a disguise (G28). No true_client_ip function here: that header
+  # exists for the application (AD-12), and S3 has no use for it.
+  ordered_cache_behavior {
+    path_pattern           = "/__status/*"
+    target_origin_id       = "status"
+    allowed_methods        = ["GET", "HEAD", "OPTIONS"]
+    cached_methods         = ["GET", "HEAD"]
+    viewer_protocol_policy = "redirect-to-https"
+    compress               = true
+    cache_policy_id        = aws_cloudfront_cache_policy.status_page.id
+  }
+
+  # 502/503/504 only — deliberately NOT 500, which is the application's own
+  # answer carrying the application's own body; mapping it would replace the
+  # API's JSON errors with HTML for every server-side bug (§5.15).
+  #
+  # error_caching_min_ttl is 10, not the 300-second default: at 300 the
+  # maintenance page outlives the outage by five minutes and the recovery is
+  # invisible to anyone who already saw it.
+  dynamic "custom_error_response" {
+    for_each = [502, 503, 504]
+
+    content {
+      error_code            = custom_error_response.value
+      response_code         = 503
+      response_page_path    = "/__status/${local.projects["blog"].hostname}/maintenance.html"
+      error_caching_min_ttl = 10
+    }
+  }
+
   restrictions {
     geo_restriction {
       restriction_type = "none"
@@ -242,6 +286,50 @@ resource "aws_cloudfront_distribution" "project" {
     function_association {
       event_type   = "viewer-request"
       function_arn = aws_cloudfront_function.true_client_ip.arn
+    }
+  }
+
+  # ── Origin-failure pages (spec §5.15) ──────────────────────────────────────
+  # A SECOND origin, and that is the whole point (G28). `response_page_path`
+  # below is a URI CloudFront re-resolves through its own behaviors, not a URL:
+  # with only the instance origin configured, CloudFront answers a 504 by
+  # fetching the error page from the origin that just timed out, fails again,
+  # and serves the generic AWS page — the exact page this replaces.
+  origin {
+    origin_id                = "status"
+    domain_name              = local.domains[each.value.domain].status_bucket_domain
+    origin_access_control_id = local.domains[each.value.domain].status_oac_id
+  }
+
+  # path_pattern and response_page_path MUST agree. A page path outside this
+  # pattern falls through to the default behavior and the dead origin — the
+  # same bug in a disguise (G28). No true_client_ip function here: that header
+  # exists for the application (AD-12), and S3 has no use for it.
+  ordered_cache_behavior {
+    path_pattern           = "/__status/*"
+    target_origin_id       = "status"
+    allowed_methods        = ["GET", "HEAD", "OPTIONS"]
+    cached_methods         = ["GET", "HEAD"]
+    viewer_protocol_policy = "redirect-to-https"
+    compress               = true
+    cache_policy_id        = aws_cloudfront_cache_policy.status_page.id
+  }
+
+  # 502/503/504 only — deliberately NOT 500, which is the application's own
+  # answer carrying the application's own body; mapping it would replace the
+  # API's JSON errors with HTML for every server-side bug (§5.15).
+  #
+  # error_caching_min_ttl is 10, not the 300-second default: at 300 the
+  # maintenance page outlives the outage by five minutes and the recovery is
+  # invisible to anyone who already saw it.
+  dynamic "custom_error_response" {
+    for_each = [502, 503, 504]
+
+    content {
+      error_code            = custom_error_response.value
+      response_code         = 503
+      response_page_path    = "/__status/${each.value.hostname}/maintenance.html"
+      error_caching_min_ttl = 10
     }
   }
 

@@ -26,6 +26,9 @@ personal-infra/
 │   ├── cloudfront.tf            # app distribution + apex alias
 │   ├── static-cdn.tf            # cdn.kenesparta.dev bucket + distribution
 │   ├── static-cnayp-bot.tf      # cnayp-bot.kenesparta.dev legal pages (§5.11)
+│   ├── status-pages.tf          # kenesparta.dev origin-failure pages: bucket, OAC (§5.15)
+│   ├── status-pages-auruming.tf # auruming.com's own status bucket (§5.15)
+│   ├── status-pages/            # the HTML itself, one directory per public hostname
 │   ├── iam.tf                   # OIDC provider + CI roles
 │   ├── legacy.tf                # container service + ECR — DELETED in Phase 7
 │   ├── storage.tf               # backup bucket (Phase 3)
