@@ -129,3 +129,45 @@ systemd unit executes on a timer is an artefact Ansible **templates**, not a ste
 replaces it — `pg-backup.sh` (the `backup` role) is such a program, because systemd `ExecStart=` has no shell and so
 cannot redirect output or build a timestamped object key. Deploy it with `template:` and keep the logic in the file
 rather than in a quoted `sh -c` inside a unit.
+
+## 9.7 OS security updates (`security.yml`, rev 2.16)
+
+A **third playbook**, alongside `site.yml` and `harden.yml` — not an eighth role, and not part of either.
+
+```bash
+make security/check    # read-only: what is pending, what is held back, is a reboot due
+make security/apply    # install it; never reboots
+```
+
+Patching is continuous and unattended: the `common` role installs `unattended-upgrades` and the policy in
+`/etc/apt/apt.conf.d/52personal-infra` (security origins only, ESM included, `docker-ce` pinned, never auto-reboot).
+`security.yml` does not replace that. It answers the two questions the nightly timer cannot: *what is outstanding right
+now*, and *install it now* — the second for the case where a CVE cannot wait until 06:00.
+
+**Why a separate playbook, not a role.** Two reasons, both the shape of A4:
+
+- An unconditional upgrade inside `site.yml` reports `changed` on every run that has anything to install. A1 is an
+  acceptance criterion, so that alone disqualifies it.
+- Installing updates restarts services. On a host with nothing to fail over to (C8) that is a deliberate act, not a
+  side effect of converging configuration.
+
+**Why it drives `unattended-upgrade`, not `apt upgrade`.** `security.yml` shells out to the same binary
+`apt-daily-upgrade.timer` runs — `--dry-run` for the check, unqualified for the apply. That binary reads
+`52personal-infra`, so the security-only origins and the Docker pin are honoured *by construction*. The alternative,
+`apt-get upgrade`, would need the same policy expressed a second time in Ansible, and the day the two disagreed the
+manual path would be the one quietly installing a `docker-ce` upgrade mid-request (G26).
+
+**It loads no vault.** Nothing here needs a secret, so `make security/check` needs no vault password — which is what
+makes it cheap enough to run on a whim.
+
+**It never reboots.** `Unattended-Upgrade::Automatic-Reboot "false"` is a decision (C8), and a playbook that quietly
+overrode it would be worse than one that did nothing. It reports that `/var/run/reboot-required` exists, names the
+packages that asked, and stops.
+
+The check also reports what is *not* covered, because that is the part no other output shows: the `docker-ce`,
+`docker-ce-cli` and `containerd.io` upgrades the blacklist holds back (G26), the per-pocket ESM counts from
+`pro security-status`, and whether `apt-daily-upgrade.timer` is still enabled — a disabled timer turns every other
+number on the page into a snapshot of a host that has stopped patching itself.
+
+Container userland is out of scope for all of it. A project's base image is patched by rebuilding and pushing to GHCR;
+the deploy timer picks it up within ten minutes (A5). `apt` on the host never touches it.

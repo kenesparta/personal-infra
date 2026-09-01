@@ -125,8 +125,10 @@ make vault/create  # ansible/group_vars/vault.yml from the committed template
 make inventory     # regenerate ansible/inventory/hosts.ini from terraform output
 make configure     # ansible-playbook site.yml   (all host config except hardening)
 make harden        # ansible-playbook harden.yml (deliberate, never part of site.yml)
+make security/check  # pending OS security updates, what the Docker pin holds back, reboot due?
+make security/apply  # install them now (drives unattended-upgrade, never reboots)
 make dns/auruming  # nameservers + DS record to paste into Namecheap (G23)
-make syntax        # parse both playbooks without touching the host
+make syntax        # parse all three playbooks without touching the host
 ```
 
 AWS access is SSO and expires. Before any apply:
@@ -217,6 +219,15 @@ Failure modes that are not obvious from any single file (`spec/12-gotchas.md`):
   separators and that punctuation only. A `Description` tag reading "the app's pages" fails `CreateRole` with a
   `ValidationError` naming an opaque `tags.N.member.value`. S3 and CloudFront tags are more permissive; IAM is the one
   that bites, and it does so mid-apply.
+- **Docker is excluded from every automatic security update** (G26). `52personal-infra` blacklists `docker-ce`,
+  `docker-ce-cli` and `containerd.io` — an unattended daemon restart takes all four services down mid-request — so the
+  most exposed component on the box is the one nothing patches on a schedule, and the u-u log never mentions what it
+  was told to skip. `make security/check` is what surfaces it; upgrading is manual and watched (`SECURITY.md`).
+  `security.yml` drives `unattended-upgrade` itself rather than `apt upgrade` precisely so this policy is inherited,
+  not restated — two copies would disagree eventually, and the disagreement shows up as an outage.
+- **`security.yml` is a third playbook, and it never reboots.** Not a role and not part of `site.yml`: an
+  unconditional upgrade there would report `changed` forever (A1), and installing updates restarts services, which on
+  a host with no failover (C8) is deliberate. It loads no vault, so `make security/check` needs no vault password.
 - **Idempotency is an acceptance criterion.** A second consecutive `make configure` must report zero `changed`. Use
   handlers; never restart unconditionally.
 - **Hardening is a separate playbook.** `usg fix` can lock you out. Snapshot, run `harden.yml`, verify

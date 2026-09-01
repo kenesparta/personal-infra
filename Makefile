@@ -23,7 +23,7 @@ endif
 
 .PHONY: help login fmt validate init plan apply output state/seed plan/phase0 \
         dns/auruming dns/auruming-zone \
-        deps inventory configure harden check-ssh syntax \
+        deps inventory configure harden security/check security/apply check-ssh syntax \
         vault/create vault/edit vault/view vault/check \
         secrets/show secrets/keys secrets/get secrets/edit secrets/set secrets/unset secrets/check \
         secrets/recipients secrets/recipient-add secrets/recipient-rm secrets/updatekeys secrets/rotate \
@@ -274,13 +274,22 @@ configure: inventory .vault-guard ## run site.yml (everything except hardening)
 harden: inventory .vault-guard ## run harden.yml — SNAPSHOT FIRST, see spec A4
 	@cd ansible && ansible-playbook -i inventory/hosts.ini $(VAULT_ARGS) harden.yml
 
+# No .vault-guard and no VAULT_ARGS on either: security.yml loads no vault
+# (spec §9.7), so reading the host's patch state costs nothing but SSH.
+security/check: inventory ## report pending OS security updates — read-only
+	@cd ansible && ansible-playbook -i inventory/hosts.ini security.yml
+
+security/apply: inventory ## install the pending OS security updates (never reboots)
+	@cd ansible && ansible-playbook -i inventory/hosts.ini -e security_apply=true security.yml
+
 check-ssh: inventory ## verify the host accepts an Ansible connection (Phase 2 gate)
 	@cd ansible && ansible -i inventory/hosts.ini app -m ping
 
-syntax: ## parse both playbooks without touching the host
-	@# VAULT_ARGS because both playbooks load group_vars/vault.yml via
-	@# vars_files (spec §9.4) — even a parse needs to decrypt it.
-	@cd ansible && ansible-playbook --syntax-check -i localhost, $(VAULT_ARGS) site.yml harden.yml
+syntax: ## parse every playbook without touching the host
+	@# VAULT_ARGS because site.yml and harden.yml load group_vars/vault.yml via
+	@# vars_files (spec §9.4) — even a parse needs to decrypt it. security.yml
+	@# does not, but passing it the args costs nothing and keeps one command.
+	@cd ansible && ansible-playbook --syntax-check -i localhost, $(VAULT_ARGS) site.yml harden.yml security.yml
 
 # ── Ansible vault ────────────────────────────────────────────────────────────
 

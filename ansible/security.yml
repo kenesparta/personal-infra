@@ -1,0 +1,193 @@
+---
+# OS security updates: report what is pending and — only when asked — install it
+# (spec §9.7).
+#
+#   make security/check    # read-only, changes nothing
+#   make security/apply    # installs the pending security updates
+#
+# A third playbook rather than a role, for two reasons that are the same shape
+# as A4's. An unconditional upgrade inside site.yml would report `changed` on
+# every run that had anything to install, which A1 forbids outright; and
+# installing updates restarts services, which on a host with nothing to fail
+# over to (C8) is a deliberate act, not a side effect of converging config.
+#
+# It loads NO vault — nothing here needs a secret — so `make security/check`
+# runs without the vault password.
+#
+# It NEVER reboots. `Unattended-Upgrade::Automatic-Reboot "false"` in
+# 52personal-infra is a decision, not a default, and this playbook honours it:
+# it reports that a reboot is due and leaves the timing to a human.
+
+- name: Report and apply OS security updates
+  hosts: app
+  become: true
+
+  vars:
+    # Read-only unless explicitly overridden:  -e security_apply=true
+    security_apply: false
+
+  tasks:
+    - name: Refresh the apt cache
+      # Deliberately without the common role's `cache_valid_time`: "what is
+      # pending" answered from an hour-old index is not an answer. Refreshing
+      # an index is not a change to the host, hence changed_when.
+      ansible.builtin.apt:
+        update_cache: true
+      changed_when: false
+
+    - name: Ask unattended-upgrades what it would install
+      # `unattended-upgrade --dry-run`, NOT `apt-get -s upgrade`. This is the
+      # same binary the nightly apt-daily-upgrade.timer runs, so it reads the
+      # same Allowed-Origins and the same Package-Blacklist out of
+      # /etc/apt/apt.conf.d/52personal-infra. One policy, in one file, with
+      # nothing here that can drift away from it (G26).
+      ansible.builtin.command: unattended-upgrade --dry-run --debug
+      register: security_dry_run
+      changed_when: false
+
+    - name: Extract the package list from the dry run
+      ansible.builtin.set_fact:
+        security_pending: >-
+          {{ (security_dry_run.stdout_lines
+              | select('match', '^Packages that will be upgraded: ')
+              | map('regex_replace', '^Packages that will be upgraded: ', '')
+              | first | default('')).split() }}
+
+    - name: Ask apt what a plain `apt upgrade` would install
+      # Only to find what the blacklist is holding back — see the next task.
+      # Parsed in Jinja rather than piped through grep so this stays a
+      # `command`, not a `shell` (A6).
+      ansible.builtin.command: apt-get --just-print upgrade
+      register: security_apt_upgrade
+      changed_when: false
+
+    - name: Separate out the Docker packages the blacklist holds back
+      # G26. 52personal-infra pins docker-ce, docker-ce-cli and containerd.io,
+      # so neither the nightly timer nor `make security/apply` will ever patch
+      # them — an unattended docker-ce upgrade restarts the daemon and takes
+      # every container down mid-request. The blind spot is deliberate; leaving
+      # it invisible would not be, so it is surfaced in the report instead of
+      # waiting to be discovered in a CVE announcement.
+      ansible.builtin.set_fact:
+        security_docker_held: >-
+          {{ security_apt_upgrade.stdout_lines
+             | select('match', '^Inst (docker-ce|docker-ce-cli|containerd\.io) ')
+             | map('regex_replace', '^Inst (\S+) .*$', '\1')
+             | list }}
+
+    - name: Check whether a reboot is already pending
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: security_reboot
+
+    - name: Read which packages asked for the reboot
+      ansible.builtin.slurp:
+        src: /var/run/reboot-required.pkgs
+      register: security_reboot_pkgs
+      when: security_reboot.stat.exists
+      # The .pkgs companion is written by the same hook, but a reboot flag with
+      # no package list is not a reason to fail a read-only report.
+      failed_when: false
+
+    - name: Read the Ubuntu Pro security status
+      # ESM-apps and ESM-infra are where the security updates for a 24.04 host
+      # come from once standard support narrows, and this is the only place
+      # that says how many are outstanding per pocket. `failed_when: false`
+      # because a host that is not Pro-attached must still get a report.
+      ansible.builtin.command: pro security-status --format json
+      register: security_pro
+      changed_when: false
+      failed_when: false
+
+    - name: Check that the nightly updater is still enabled
+      # If this timer is off, everything above is a snapshot of a host that is
+      # no longer patching itself — which is the failure worth catching here.
+      ansible.builtin.command: systemctl is-enabled apt-daily-upgrade.timer
+      register: security_timer_enabled
+      changed_when: false
+      failed_when: false
+
+    - name: Read when the nightly updater last ran
+      ansible.builtin.command: systemctl show apt-daily-upgrade.timer --property=LastTriggerUSec --value
+      register: security_timer_last
+      changed_when: false
+      failed_when: false
+
+    - name: Summarise the Ubuntu Pro counts
+      # Every lookup is defaulted: a schema change in the pro client should
+      # degrade this line to "unknown", not abort a security report.
+      ansible.builtin.set_fact:
+        security_pro_summary: >-
+          {{ (security_pro.stdout | from_json).summary | default({}, true)
+             if security_pro.rc == 0 else {} }}
+
+    - name: Report the host's security-update state
+      ansible.builtin.debug:
+        msg:
+          - "pending security updates ..... {{ security_pending | length }}"
+          - "                               {{ security_pending | join(' ') | default('(none)', true) }}"
+          - "held back by the Docker pin .. {{ security_docker_held | join(' ') | default('(none — G26)', true) }}"
+          - >-
+            reboot required ..............
+            {{ 'YES — ' ~ (security_reboot_pkgs.content | default('') | b64decode | trim | regex_replace('\s+', ' '))
+               if security_reboot.stat.exists else 'no' }}
+          - >-
+            esm-apps / esm-infra / std ...
+            {{ security_pro_summary.num_esm_apps_updates | default('?') }} /
+            {{ security_pro_summary.num_esm_infra_updates | default('?') }} /
+            {{ security_pro_summary.num_standard_security_updates | default('?') }}
+          - >-
+            nightly updater ..............
+            {{ security_timer_enabled.stdout | default('unknown', true) }},
+            last ran {{ security_timer_last.stdout | default('unknown', true) }}
+          - >-
+            {{ 'read-only — re-run with `make security/apply` to install the above'
+               if not (security_apply | bool) else 'applying...' }}
+
+    - name: Install the pending security updates
+      # The very same unattended-upgrade the nightly timer runs, now — not
+      # `apt upgrade`. Security origins only and the Docker pin honoured by
+      # construction, with no second policy to keep in step (G26).
+      #
+      # It can lose a race with the nightly apt-daily-upgrade.timer and fail on
+      # the dpkg lock. That is a retry, not a problem: nothing here is partially
+      # applied, because dpkg holds the lock for the whole transaction.
+      ansible.builtin.command: unattended-upgrade --debug
+      register: security_applied
+      when: security_apply | bool and security_pending | length > 0
+      changed_when: security_applied.rc == 0
+
+    - name: Re-check whether a reboot is now pending
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: security_reboot_after
+      when: security_applied is changed
+
+    - name: Work out whether a reboot is due
+      # `is defined` rather than a chained default: when the re-check above was
+      # skipped, `security_reboot_after.stat` does not exist at all, and the
+      # answer is simply whatever the pre-flight stat found.
+      ansible.builtin.set_fact:
+        security_reboot_due: >-
+          {{ security_reboot_after.stat.exists
+             if security_reboot_after.stat is defined
+             else security_reboot.stat.exists }}
+
+    - name: Say what is left to do
+      # Only after an apply. The read-only path has already said its piece, and
+      # a "nothing was installed" line on a run that never intended to install
+      # anything reads like a failure.
+      ansible.builtin.debug:
+        msg:
+          - >-
+            {{ 'Nothing was pending; nothing installed.' if security_applied is skipped
+               else 'Installed: ' ~ (security_pending | join(' ')) }}
+          - >-
+            {{ 'A REBOOT IS DUE. This playbook will never take it — snapshot first if the
+                kernel changed, then `sudo reboot` on the host and confirm every container
+                came back with `docker compose ps`.'
+               if security_reboot_due else 'No reboot required.' }}
+          - >-
+            Containers are unaffected either way: they carry their own userland and are
+            patched by rebuilding the image, not by apt. See SECURITY.md.
+      when: security_apply | bool

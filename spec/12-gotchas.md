@@ -311,3 +311,25 @@ So: **no target in this repository should document a bare `terraform` command.**
 `-target` gets a Makefile target of its own (`dns/auruming-zone`), which is also where the justification for
 `-target` belongs — Terraform prints a "resource targeting is in effect" warning on every such run, and a warning
 with no written reason next to it is one people learn to scroll past.
+
+**G26 — Docker is deliberately excluded from every automatic security update, and nothing says so out loud.** (rev
+2.16) `/etc/apt/apt.conf.d/52personal-infra` (the `common` role) blacklists `docker-ce`, `docker-ce-cli` and
+`containerd.io`. The reason is sound: an unattended `docker-ce` upgrade restarts the daemon, and with four services on
+one host that is every container down mid-request, at 06:00, unwatched. But the consequence is a standing blind spot —
+the one component reachable from the internet on ports 80 and 443 by way of Caddy is also the one component
+`unattended-upgrades` will never patch, and its log will not mention the packages it was told to skip.
+
+`make security/check` surfaces the held-back versions for exactly this reason. Upgrading them is a manual, scheduled
+act, in a window where someone is watching:
+
+```bash
+ssh ubuntu@HOST sudo apt-get install --only-upgrade docker-ce docker-ce-cli containerd.io
+ssh ubuntu@HOST docker compose -f /opt/personal-infra/caddy/docker-compose.yml ps   # …and each project
+```
+
+Two traps in that upgrade. `live-restore` (set by the `docker` role) keeps containers running across a daemon restart
+but **not** across a containerd restart, so expect the containers to bounce anyway — plan for it rather than being
+surprised by it. And the same blacklist is why `make security/apply` cannot be a synonym for `apt upgrade`: the
+playbook drives `unattended-upgrade`, the very binary the nightly timer runs, so it inherits this policy instead of
+re-stating it. Re-stating it is how the two paths would eventually disagree, and the disagreement would only ever be
+noticed as an outage (spec §9.7).

@@ -154,7 +154,14 @@ make check-ssh     # ansible -m ping
 make configure     # site.yml — everything except hardening
 make configure     # ...again: the second run must report 0 changed (acceptance criterion 2)
 make harden        # harden.yml — SNAPSHOT FIRST; runs usg fix with the G18 tailoring only
+
+make security/check  # what OS security updates are pending, and what is held back (read-only)
+make security/apply  # install them now instead of waiting for tonight; never reboots
 ```
+
+Patching is otherwise continuous and unattended — `unattended-upgrades`, security pockets only, never auto-rebooting.
+[`SECURITY.md`](SECURITY.md) is the whole posture: what updates itself, the three things that do not (Docker, the
+kernel, container images), and what to do about each.
 
 `make inventory` regenerates `ansible/inventory/hosts.ini` from `terraform output -raw static_ip`. Terraform owns the
 IP; Ansible reads it. It is deliberately *not* a `local_file` resource — that would put a generated local file under
@@ -492,6 +499,7 @@ key of every committed version, and `secrets/rotate` (a *new* data key) is what 
 |---------------------------|-----------------------------------------------------------------------------------------------|
 | `spec/`                   | Source of truth — decisions, rejected alternatives, phases, gotchas (index: `spec/README.md`) |
 | `CLAUDE.md`               | Guidance for Claude Code sessions                                                             |
+| `SECURITY.md`             | OS patch posture — what is automatic, what is not, and how to check (§9.7)                    |
 | `projects.yml`            | The project fan-out, shared by both tools                                                     |
 | `terraform/main.tf`       | The instance, static IP, firewall, snapshots                                                  |
 | `terraform/cloudfront.tf` | Per-project distributions and the origin-secret header                                        |
@@ -501,4 +509,5 @@ key of every committed version, and `secrets/rotate` (a *new* data key) is what 
 | `terraform/snapshot-weekly.tf` | Sunday snapshot Lambda + EventBridge rule; the add-on is disabled (G20)                  |
 | `terraform/storage.tf`    | The backup bucket — its access key deliberately not in state                                  |
 | `ansible/site.yml`        | Everything except hardening; `harden.yml` is separate on purpose (A4)                         |
+| `ansible/security.yml`    | OS security updates: report by default, install with `-e security_apply=true`                  |
 | `ansible/roles/`          | `common` `docker` `postgres` `caddy` `deploy` `backup` `hardening`                            |

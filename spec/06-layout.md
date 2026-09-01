@@ -3,6 +3,7 @@
 ```
 personal-infra/
 ├── README.md
+├── SECURITY.md                  # OS patch posture: what is automatic, what is not (§9.7)
 ├── Makefile                     # ties the two stages together
 ├── projects.yml                 # single source of truth, read by both tools
 ├── .sops.yaml                   # copied from the app repo — same age recipient
@@ -41,6 +42,7 @@ personal-infra/
     ├── ansible.cfg
     ├── site.yml                 # everything except hardening
     ├── harden.yml               # run deliberately, never in site.yml
+    ├── security.yml             # OS security updates: report, and apply on request (§9.7)
     ├── inventory/hosts.ini      # generated, gitignored
     ├── group_vars/
     │   ├── all.yml
