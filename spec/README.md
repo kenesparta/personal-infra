@@ -3,7 +3,7 @@
 Terraform + Ansible project provisioning a single-host, multi-project application server on AWS Lightsail, and
 consolidating all `kenesparta.dev` AWS infrastructure into one state.
 
-**Status:** rev 2.16 **Owner:** kenesparta **Target:** `kenesparta.dev` and `auruming.com` — four Rust services on one host (C3, met exactly)
+**Status:** rev 2.17 **Owner:** kenesparta **Target:** `kenesparta.dev` and `auruming.com` — four Rust services on one host (C3, met exactly)
 
 One file per numbered section; the numbering is stable and is what code comments cite (`spec §5.3`). The spec is the
 source of truth — see [§1](01-purpose.md): if implementation needs something not described here, amend the spec first.
@@ -23,7 +23,7 @@ source of truth — see [§1](01-purpose.md): if implementation needs something 
 | 9  | [Ansible Specification](09-ansible.md)     | Inventory handoff, the seven roles, `projects.yml` asserts, A1–A6, OS security updates (§9.7) |
 | 10 | [Migration Phases](10-phases.md)           | Phase 0–9, in order, each with its verification gate             |
 | 11 | [Acceptance Criteria](11-acceptance.md)    | The 14 checks that define "done"                                 |
-| 12 | [Gotchas](12-gotchas.md)                   | G1–G26 — failure modes not obvious from any single file          |
+| 12 | [Gotchas](12-gotchas.md)                   | G1–G27 — failure modes not obvious from any single file          |
 | 13 | [Out of Scope](13-out-of-scope.md)         | Deferred, with the trigger to reconsider each                    |
 | 14 | [Cost Model](14-cost.md)                   | Current vs target monthly spend                                  |
 

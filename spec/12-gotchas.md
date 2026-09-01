@@ -333,3 +333,33 @@ surprised by it. And the same blacklist is why `make security/apply` cannot be a
 playbook drives `unattended-upgrade`, the very binary the nightly timer runs, so it inherits this policy instead of
 re-stating it. Re-stating it is how the two paths would eventually disagree, and the disagreement would only ever be
 noticed as an outage (spec §9.7).
+
+**G27 — `/var/run/reboot-required` is not a reliable answer to "does this host need rebooting?"** (rev 2.17) Found on
+2026-09-01, by the check that had just been written to trust it: the host was running `7.0.0-1009-aws` with
+`7.0.0-1011-aws` installed and `linux-image-aws` pointing at it, and the flag file did not exist — so
+`make security/check` reported *no reboot required* while two kernel revisions of security fixes sat on disk, unbooted,
+after 31 days of uptime.
+
+The flag is written by an `update-notifier` package hook, and it lives in `/var/run`, a **tmpfs**. It is therefore a
+statement about "did a hook fire since the last boot", not about "is the running kernel the newest installed one".
+Anything that installs a kernel without that hook — and anything that clears the tmpfs — leaves the file absent on a
+host that genuinely needs a reboot. Absence proves nothing; presence is still meaningful.
+
+`needrestart -b -r l` answers the real question, because it *compares* rather than remembers:
+
+```
+NEEDRESTART-KCUR: 7.0.0-1009-aws     # running
+NEEDRESTART-KEXP: 7.0.0-1011-aws     # newest installed
+NEEDRESTART-KSTA: 3                  # 1 current, 2 ABI-compatible pending, 3 version upgrade pending
+NEEDRESTART-SVC: docker.service      # …one line per service still mapping deleted libraries
+```
+
+`security.yml` reads both and treats **either** as reason to report a reboot due. Two details matter when touching it.
+`-r l` forces list-only: needrestart's restart mode is otherwise interactive or automatic depending on context, and
+that task also runs on the read-only `make security/check`. And `KSTA` must be compared **as a string** —
+`set_fact` puts a bare `"3"` through `literal_eval` and hands back the integer `3`, so `in ['2', '3']` is silently
+False without a `| string`. The symptom of getting that wrong is identical to the bug this gotcha is about: a clean
+report on a host that needs rebooting.
+
+Same shape as the DNSSEC check in acceptance criterion 11 — the obvious probe returns a reassuring answer to a
+question you did not ask.

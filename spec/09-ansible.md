@@ -161,8 +161,12 @@ manual path would be the one quietly installing a `docker-ce` upgrade mid-reques
 makes it cheap enough to run on a whim.
 
 **It never reboots.** `Unattended-Upgrade::Automatic-Reboot "false"` is a decision (C8), and a playbook that quietly
-overrode it would be worse than one that did nothing. It reports that `/var/run/reboot-required` exists, names the
-packages that asked, and stops.
+overrode it would be worse than one that did nothing. It reports that a reboot is due, names why, and stops.
+
+*Amended rev 2.17:* "due" is two signals, not one. `/var/run/reboot-required` is a tmpfs file written by a package
+hook, so its absence is not evidence — this host ran 31 days two kernel revisions behind with no flag set (G27). The
+playbook also runs `needrestart -b -r l`, which **compares** the running kernel against the newest installed one and
+lists the services still mapping deleted libraries, and treats either signal as reason to report.
 
 The check also reports what is *not* covered, because that is the part no other output shows: the `docker-ce`,
 `docker-ce-cli` and `containerd.io` upgrades the blacklist holds back (G26), the per-pocket ESM counts from

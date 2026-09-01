@@ -89,6 +89,48 @@
       # no package list is not a reason to fail a read-only report.
       failed_when: false
 
+    - name: Ask needrestart what is actually stale
+      # The flag file above is NOT sufficient, and this host proved it on
+      # 2026-09-01: booted on 7.0.0-1009-aws with 7.0.0-1011-aws installed and
+      # /var/run/reboot-required absent, so the report read "no reboot
+      # required" while two kernel revisions of security fixes sat unbooted.
+      # The flag depends on a package hook having fired and on /var/run (a
+      # tmpfs) not having been cleared; needrestart instead COMPARES the
+      # running kernel against the newest installed one, and lists the
+      # services still mapping deleted libraries. It cannot miss for the same
+      # reasons the flag can.
+      #
+      # `-r l` forces list-only. Without it needrestart's restart mode can be
+      # interactive or automatic, and this task is read-only by contract — it
+      # runs on `make security/check` too.
+      ansible.builtin.command: needrestart -b -r l
+      register: security_needrestart
+      changed_when: false
+      failed_when: false
+
+    - name: Read the kernel and service findings out of needrestart
+      # KSTA: 0 unknown, 1 current, 2 ABI-compatible upgrade pending,
+      # 3 version upgrade pending. KCUR/KEXP are the running and newest
+      # installed kernels. Everything defaults, so a host without needrestart
+      # still gets a report rather than a traceback.
+      ansible.builtin.set_fact:
+        security_kernel_state: >-
+          {{ security_needrestart.stdout_lines | default([])
+             | select('match', '^NEEDRESTART-KSTA: ')
+             | map('regex_replace', '^NEEDRESTART-KSTA: ', '') | first | default('0') }}
+        security_kernel_running: >-
+          {{ security_needrestart.stdout_lines | default([])
+             | select('match', '^NEEDRESTART-KCUR: ')
+             | map('regex_replace', '^NEEDRESTART-KCUR: ', '') | first | default('?') }}
+        security_kernel_newest: >-
+          {{ security_needrestart.stdout_lines | default([])
+             | select('match', '^NEEDRESTART-KEXP: ')
+             | map('regex_replace', '^NEEDRESTART-KEXP: ', '') | first | default('?') }}
+        security_stale_services: >-
+          {{ security_needrestart.stdout_lines | default([])
+             | select('match', '^NEEDRESTART-SVC: ')
+             | map('regex_replace', '^NEEDRESTART-SVC: ', '') | list }}
+
     - name: Read the Ubuntu Pro security status
       # ESM-apps and ESM-infra are where the security updates for a 24.04 host
       # come from once standard support narrows, and this is the only place
@@ -128,9 +170,18 @@
           - "                               {{ security_pending | join(' ') | default('(none)', true) }}"
           - "held back by the Docker pin .. {{ security_docker_held | join(' ') | default('(none — G26)', true) }}"
           - >-
-            reboot required ..............
-            {{ 'YES — ' ~ (security_reboot_pkgs.content | default('') | b64decode | trim | regex_replace('\s+', ' '))
-               if security_reboot.stat.exists else 'no' }}
+            reboot flag ..................
+            {{ 'set — ' ~ (security_reboot_pkgs.content | default('') | b64decode | trim | regex_replace('\s+', ' '))
+               if security_reboot.stat.exists else 'not set' }}
+          - >-
+            running kernel ...............
+            {{ security_kernel_running }}
+            {{ '(STALE — ' ~ security_kernel_newest ~ ' is installed and waiting)'
+               if security_kernel_state | string in ['2', '3'] else '(current)' }}
+          - >-
+            services on old libraries ....
+            {{ security_stale_services | length }}
+            {{ '— ' ~ (security_stale_services | join(' ')) if security_stale_services else '' }}
           - >-
             esm-apps / esm-infra / std ...
             {{ security_pro_summary.num_esm_apps_updates | default('?') }} /
@@ -164,14 +215,15 @@
       when: security_applied is changed
 
     - name: Work out whether a reboot is due
-      # `is defined` rather than a chained default: when the re-check above was
-      # skipped, `security_reboot_after.stat` does not exist at all, and the
-      # answer is simply whatever the pre-flight stat found.
+      # Either signal is enough. `is defined` rather than a chained default:
+      # when the re-check above was skipped, `security_reboot_after.stat` does
+      # not exist at all, and the flag's answer is the pre-flight stat's.
       ansible.builtin.set_fact:
         security_reboot_due: >-
-          {{ security_reboot_after.stat.exists
-             if security_reboot_after.stat is defined
-             else security_reboot.stat.exists }}
+          {{ (security_reboot_after.stat.exists
+              if security_reboot_after.stat is defined
+              else security_reboot.stat.exists)
+             or security_kernel_state | string in ['2', '3'] }}
 
     - name: Say what is left to do
       # Only after an apply. The read-only path has already said its piece, and

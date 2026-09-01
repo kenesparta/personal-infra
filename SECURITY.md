@@ -43,7 +43,9 @@ ports 80 and 443 are open to the world — sits on a runtime nothing patches aut
 is a manual act, below.
 
 **2. The kernel, and anything else needing a reboot.** Updates install; the running kernel keeps running until someone
-reboots. `/var/run/reboot-required` is how the host says so, and `make security/check` reads it.
+reboots, and so do any daemons still holding the old libraries open. `make security/check` reports both — comparing the
+running kernel against the newest installed one rather than trusting `/var/run/reboot-required`, which is a tmpfs file
+written by a package hook and is routinely absent on a host that genuinely needs rebooting (G27).
 
 **3. Container userland.** Every project ships its own base image and its own OpenSSL. `apt` on the host never touches
 them. They are patched by rebuilding the image in the project's own repository and pushing to GHCR — the deploy timer
@@ -64,7 +66,9 @@ Seven lines, each answering something the others do not:
 pending security updates ..... 3
                                libc6 libssl3t64 openssh-server
 held back by the Docker pin .. docker-ce containerd.io
-reboot required .............. YES — linux-image-6.8.0-45-generic libc6
+reboot flag .................. set — linux-image-7.0.0-1011-aws libc6
+running kernel ............... 7.0.0-1009-aws (STALE — 7.0.0-1011-aws is installed and waiting)
+services on old libraries .... 7 — dbus.service docker.service systemd-logind.service …
 esm-apps / esm-infra / std ... 2 / 0 / 3
 nightly updater .............. enabled, last ran Sun 2026-08-30 06:14:22 UTC
 read-only — re-run with `make security/apply` to install the above
@@ -73,7 +77,12 @@ read-only — re-run with `make security/apply` to install the above
 - **pending** — what `unattended-upgrade --dry-run` would install *right now*. Usually zero: the timer ran last night.
   A non-empty list means an advisory landed since then.
 - **held back by the Docker pin** — G26 made visible. Not urgent by default, but it is the only place this appears.
-- **reboot required** — and which packages asked. The playbook will never act on this.
+- **reboot flag** — `/var/run/reboot-required`, and which packages asked for it.
+- **running kernel** — the running kernel against the newest installed one, from `needrestart`. This is the line that
+  matters: the flag above lives in a tmpfs and depends on a hook having fired, so its *absence* proves nothing (G27).
+  This host sat two kernel revisions behind with no flag set for 31 days.
+- **services on old libraries** — long-running processes still mapping deleted `.so` files after an upgrade. A reboot
+  clears the list; so does restarting each named service, if you would rather not reboot.
 - **esm-apps / esm-infra / std** — from `pro security-status`. Counts by pocket; the ESM ones are what the Pro
   attachment buys and are the reason `harden.yml` runs `pro attach` at all.
 - **nightly updater** — if this ever says `disabled`, every number above it is a snapshot of a host that has stopped
@@ -94,7 +103,7 @@ re-run it. Nothing is left half-applied, because dpkg holds the lock for the who
 
 ## Rebooting
 
-Deliberate, and never by a playbook. When `reboot required` is `YES`:
+Deliberate, and never by a playbook. When either `reboot flag` is set or `running kernel` says `STALE`:
 
 ```bash
 aws lightsail create-instance-snapshot --instance-name kenesparta-host \
