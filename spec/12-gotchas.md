@@ -387,3 +387,38 @@ The page must therefore come from a **second origin that is up when the first is
 
 The same trap explains why the legal site's 403/404 → `/404.html` (§5.11) is *not* an instance of it: that
 distribution's only origin is S3, so the error page and the content share an origin that does not go down.
+
+**G29 — A Caddy error page served with `file_server` returns 200, which silently switches off the CloudFront layer
+above it.** (rev 2.19) `handle_errors` runs a fresh route, and whatever that route writes decides the status.
+`file_server` writes **200**. So the natural-looking block —
+
+```
+handle_errors 5xx {
+    root * /srv/errors
+    rewrite * /blog.html
+    file_server           # ← no status override
+}
+```
+
+— turns a 502 from a dead container into a *successful* response whose body happens to say the site is down. Three
+things break at once, none of them loudly: CloudFront's `custom_error_response` never fires because there is no error
+to map (§5.15), the edge caches a 200 as a normal page, and a crawler indexes the maintenance text as the site's real
+content. Every layer behaves correctly on the input it was given; the input was wrong.
+
+The fix is one subdirective, and it is load-bearing rather than cosmetic:
+
+```
+    file_server {
+        status {err.status_code}
+    }
+```
+
+Verify by status code, never by eyeball — the page looks identical either way, which is exactly why this survives a
+visual check. Reach Caddy directly, past the edge, with the gate's own header:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' \
+  -H "X-Origin-Verify: $SECRET" https://origin-bot.kenesparta.dev/
+```
+
+502 is right; 200 means the whole chain above is now decorative.

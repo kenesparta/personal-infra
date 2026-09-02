@@ -48,6 +48,24 @@
 		reverse_proxy {{ p.name }}:{{ p.port }}
 	}
 
+	# The box's own answer when {{ p.name }} is down but Caddy is up (spec §9.8).
+	# CloudFront maps 502/503/504 to the same page (§5.15), so most viewers never
+	# reach this — it is the second line of the same defence, and the only line if
+	# a distribution ever loses its mapping. Errors only: `respond 403` in the
+	# origin gate above WRITES a response rather than raising an error, so the
+	# gate stays a bare 403 and explains nothing to a prober.
+	handle_errors 5xx {
+		root * /srv/errors
+		rewrite * /{{ p.name }}.html
+		file_server {
+			# G29 — LOAD-BEARING. Without it file_server writes its own 200 and
+			# the 502 becomes a success carrying maintenance text: CloudFront's
+			# custom_error_response never fires, the edge caches it, and crawlers
+			# index the outage page. The status must survive the error handler.
+			status {err.status_code}
+		}
+	}
+
 	log {
 		output stdout
 		format json

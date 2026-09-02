@@ -175,3 +175,40 @@ number on the page into a snapshot of a host that has stopped patching itself.
 
 Container userland is out of scope for all of it. A project's base image is patched by rebuilding and pushing to GHCR;
 the deploy timer picks it up within ten minutes (A5). `apt` on the host never touches it.
+
+## 9.8 Origin-failure pages on the box (rev 2.19)
+
+The second half of §5.15. CloudFront maps 502/503/504 to a branded page from S3; this makes **Caddy itself** answer
+the same way for the case CloudFront's mapping describes but does not cause — a project's container down while the
+box, and Caddy, are up and healthy.
+
+```
+handle_errors 5xx {
+    root * /srv/errors
+    rewrite * /<project>.html
+    file_server {
+        status {err.status_code}
+    }
+}
+```
+
+**It is deliberately redundant, and that is the point.** With §5.15 applied, a viewer coming through CloudFront never
+sees this page: Caddy returns 502, and the edge replaces it. What this buys is that the origin is *correct on its
+own* — a distribution that loses its `custom_error_response` (a new project added without it, a hand edit at the
+console) degrades to a branded page from the box instead of back to the AWS default. Defence in depth on a control
+whose failure is invisible until an outage.
+
+**One file, both tools.** The pages live at the repository root in `status-pages/<hostname>/maintenance.html`, not
+under `terraform/` and not in the role's `files/`. Terraform uploads them to the status buckets; the `caddy` role
+copies the same files onto the host. This is the `projects.yml` seam applied again (§5.3): two consumers, one
+authority, no copy that can rot. The role reads them through `{{ playbook_dir }}/../status-pages/`.
+
+**The status must survive the error handler** — `file_server` writes its own 200 unless told otherwise, and a
+maintenance page served as 200 is worse than no page at all (G29).
+
+**The origin gate is untouched.** `handle_errors` fires on errors *raised* by a handler; `respond 403` in the
+`origin_gate` snippet writes a response directly and raises nothing. A request without `X-Origin-Verify` still gets a
+bare 403 that explains nothing, which is what a security control should do.
+
+No handler notification on the copy task: `file_server` reads from disk per request, so an edited page is live
+without a `caddy reload`. The volume mount is a directory for G17's reason, like `./conf`.

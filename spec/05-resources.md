@@ -585,8 +585,10 @@ Serving a maintenance page as 200 invites it to be indexed as the site's real co
 
 **Why one page per hostname.** `projects.yml` describes three public sites with nothing in common but their operator;
 a single shared page would have to be generic enough to be true of all of them, which is how maintenance pages end up
-saying nothing. The pages live in `terraform/status-pages/<hostname>/` and are uploaded by Terraform, not CI — they
-are a few KB, they change roughly never, and they must exist before the outage that needs them.
+saying nothing. The pages live at the repository root in `status-pages/<hostname>/` and are uploaded by
+Terraform, not CI — they are a few KB, they change roughly never, and they must exist before the outage that needs
+them. Root, not `terraform/`, because Ansible reads the same files to serve them from Caddy (§9.8, rev 2.19): one
+authority, two consumers, exactly like `projects.yml`.
 
 **Self-contained is a requirement, not a preference.** Every page inlines its CSS and uses no image, font, or script
 from anywhere. An external asset referenced from the maintenance page would be fetched from the same dead origin and

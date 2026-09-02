@@ -6,6 +6,9 @@ personal-infra/
 ├── SECURITY.md                  # OS patch posture: what is automatic, what is not (§9.7)
 ├── Makefile                     # ties the two stages together
 ├── projects.yml                 # single source of truth, read by both tools
+├── status-pages/                # origin-failure HTML, one dir per public hostname —
+│                                #   ALSO read by both tools: Terraform uploads it to
+│                                #   the status buckets, Ansible serves it from Caddy
 ├── .sops.yaml                   # copied from the app repo — same age recipient
 ├── spec/                        # this document — one file per numbered section
 │   ├── README.md                # index + the stable-ID map (C, AD, A, G, Phase)
@@ -28,7 +31,6 @@ personal-infra/
 │   ├── static-cnayp-bot.tf      # cnayp-bot.kenesparta.dev legal pages (§5.11)
 │   ├── status-pages.tf          # kenesparta.dev origin-failure pages: bucket, OAC (§5.15)
 │   ├── status-pages-auruming.tf # auruming.com's own status bucket (§5.15)
-│   ├── status-pages/            # the HTML itself, one directory per public hostname
 │   ├── iam.tf                   # OIDC provider + CI roles
 │   ├── legacy.tf                # container service + ECR — DELETED in Phase 7
 │   ├── storage.tf               # backup bucket (Phase 3)

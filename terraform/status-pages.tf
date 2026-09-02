@@ -80,6 +80,11 @@ resource "aws_s3_bucket_policy" "status_pages" {
 # repository path, and `__status/` is the prefix the ordered cache behavior
 # matches — key and path_pattern must agree or the error page routes back to the
 # default behavior and the dead origin (G28).
+#
+# The source is ../status-pages/, at the REPOSITORY ROOT and outside this
+# directory on purpose. Ansible's caddy role reads the same files to serve them
+# from the box itself (§9.8), so this is a `projects.yml`-shaped seam: one file,
+# both tools, no copy to drift.
 resource "aws_s3_object" "status_pages" {
   for_each = {
     for host, domain in local.status_pages : host => host if domain == var.primary_dns
@@ -87,7 +92,7 @@ resource "aws_s3_object" "status_pages" {
 
   bucket = aws_s3_bucket.status_pages.id
   key    = "__status/${each.key}/maintenance.html"
-  source = "${path.module}/status-pages/${each.key}/maintenance.html"
+  source = "${path.module}/../status-pages/${each.key}/maintenance.html"
 
   content_type = "text/html; charset=utf-8"
 
@@ -98,7 +103,7 @@ resource "aws_s3_object" "status_pages" {
   cache_control = "public, max-age=300"
 
   # Without this Terraform compares nothing and an edited page never uploads.
-  etag = filemd5("${path.module}/status-pages/${each.key}/maintenance.html")
+  etag = filemd5("${path.module}/../status-pages/${each.key}/maintenance.html")
 
   tags = local.common_tags
 }

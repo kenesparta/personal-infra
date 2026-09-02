@@ -21,6 +21,36 @@
     group: root
     mode: "0755"
 
+- name: Create the Caddy error-page directory
+  ansible.builtin.file:
+    path: "{{ infra_root }}/caddy/errors"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install each project's origin-failure page
+  # THE SAME FILES Terraform uploads to the status buckets (spec §5.15), read
+  # from the repository root rather than copied into this role's files/. Two
+  # copies of one page is the drift projects.yml exists to prevent, and the copy
+  # that rotted would be the one nobody looks at until an outage.
+  #
+  # Only projects with an `origin` have a vhost to attach an error handler to; a
+  # headless project (§5.3) has none. `hostname` is safe to read here because
+  # the ingress set is all-or-none, asserted in site.yml.
+  #
+  # No handler: file_server reads the file per request, so an edited page is
+  # live without reloading Caddy.
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../status-pages/{{ item.hostname }}/maintenance.html"
+    dest: "{{ infra_root }}/caddy/errors/{{ item.name }}.html"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ projects | selectattr('origin', 'defined') | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+
 - name: Write the Caddy environment file
   ansible.builtin.template:
     src: env.j2

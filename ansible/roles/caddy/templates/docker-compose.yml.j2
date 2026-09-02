@@ -34,6 +34,10 @@ services:
       # single-file bind mount pins the old inode — the container would keep
       # reading the pre-edit config forever (G17).
       - ./conf:/etc/caddy:ro
+      # The origin-failure pages (spec §9.8). Read-only, and a DIRECTORY for the
+      # same reason ./conf is (G17). Content changes need no reload: file_server
+      # reads from disk per request.
+      - ./errors:/srv/errors:ro
       # G8 — LOAD-BEARING. /data holds the issued certificates and the ACME
       # account key. Lose it and Caddy re-issues every origin-* certificate on
       # the next start, against a budget of 50 per week for the whole of

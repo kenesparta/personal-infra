@@ -71,11 +71,11 @@ resource "aws_s3_object" "status_pages_auruming" {
 
   bucket = aws_s3_bucket.status_pages_auruming.id
   key    = "__status/${each.key}/maintenance.html"
-  source = "${path.module}/status-pages/${each.key}/maintenance.html"
+  source = "${path.module}/../status-pages/${each.key}/maintenance.html"
 
   content_type  = "text/html; charset=utf-8"
   cache_control = "public, max-age=300"
-  etag          = filemd5("${path.module}/status-pages/${each.key}/maintenance.html")
+  etag          = filemd5("${path.module}/../status-pages/${each.key}/maintenance.html")
 
   tags = local.common_tags
 }
