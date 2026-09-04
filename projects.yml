@@ -113,6 +113,14 @@ projects:
     image: ghcr.io/kenesparta/auruming
     port: 3002
     database: auruming
+    # Nothing in the image reads a DATABASE_URL yet (the site is a static
+    # coming-soon page), so the deploy role leaves it out of .env — a live
+    # credential in the environment of a process that never uses it shows up in
+    # `docker inspect` and /proc/<pid>/environ and buys nothing. The role and
+    # database above are still provisioned, so this becomes `true` (or just
+    # goes away) the day the platform needs them. See auruming.com SECURITY.md,
+    # SEC-007.
+    inject_database_url: false
     env:
       LEPTOS_SITE_ADDR: "0.0.0.0:3002"
       RUST_LOG: info
