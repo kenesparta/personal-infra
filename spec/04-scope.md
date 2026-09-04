@@ -40,7 +40,8 @@
 
 **Added in rev 2.13 — the asset CDN (§5.13):** `cdn.auruming.com` — S3 bucket (`auruming-cdn`, undotted), OAC,
 CloudFront distribution and its alias records in `auruming.com`'s zone. No IAM publishing role: uploads are manual
-under the SSO profile until a producer exists.
+under the SSO profile until a producer exists. Since rev 2.20 it serves `/` from an empty `index.html` and answers
+CORS with `*`, as `cdn.kenesparta.dev` does; that `index.html` is part of the upload set, not Terraform's.
 
 Terraform does **not** own the delegation: the domain is registered at Namecheap, so the nameserver change and the
 DS record are manual steps in a registrar dashboard, in the order G23 gives. Nothing in this repository can detect

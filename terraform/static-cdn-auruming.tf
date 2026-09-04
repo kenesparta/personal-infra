@@ -112,8 +112,18 @@ resource "aws_cloudfront_response_headers_policy" "auruming_cdn" {
     }
   }
 
-  # Present, unlike §5.11's legal pages: these assets are fetched cross-origin
-  # by pages on auruming.com. The legal pages are opened directly and need none.
+  # Present, unlike §5.11's legal pages: fonts are fetched cross-origin by pages
+  # on auruming.com, and a font is the one static asset a browser refuses
+  # outright without CORS — <img> and <video> load fine without it. The legal
+  # pages are opened directly and need none.
+  #
+  # `*`, matching cdn.kenesparta.dev (rev 2.20). Until then this listed only
+  # https://auruming.com, and the effect was that a font served from here loaded
+  # on exactly that origin and nowhere else — not on a local dev server, not on
+  # any other property — presenting as a console full of CORS errors, i.e. as
+  # the CDN being unreachable. Every object here is public (anyone can curl it)
+  # and credentials are off, so an allowlist of one origin withheld nothing from
+  # anyone who could type a URL; it only withheld the assets from browsers.
   cors_config {
     access_control_allow_credentials = false
 
@@ -126,7 +136,7 @@ resource "aws_cloudfront_response_headers_policy" "auruming_cdn" {
     }
 
     access_control_allow_origins {
-      items = ["https://${var.auruming_dns}"]
+      items = ["*"]
     }
 
     origin_override = true
@@ -156,8 +166,14 @@ resource "aws_cloudfront_distribution" "auruming_cdn" {
   # otherwise. Without this the CloudFront default is `http2` and no viewer ever
   # attempts QUIC. Unrelated to Caddy's 443/udp publish, which no viewer reaches.
   http_version = "http2and3"
-  # No default_root_object: this is an asset bucket, not a site. A request for
-  # `/` should 403 -> 404 rather than resolve to an index.html nobody uploaded.
+  # rev 2.20 — an (empty) index.html IS part of the upload set now, as on
+  # cdn.kenesparta.dev, so `/` answers 200 instead of S3's AccessDenied XML.
+  # The XML was technically right for an asset bucket and practically a false
+  # alarm: the first thing a person does to check a CDN is open its hostname,
+  # and a 403 there reads as "not reachable". Only `/` is affected — a missing
+  # KEY still returns 403 (no s3:ListBucket, same as §5.11), and the object
+  # must exist or `/` goes back to 403 (it was uploaded 2026-09-04).
+  default_root_object = "index.html"
 
   origin {
     domain_name              = aws_s3_bucket.auruming_cdn.bucket_regional_domain_name

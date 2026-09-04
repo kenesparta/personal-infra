@@ -3,7 +3,7 @@
 Terraform + Ansible project provisioning a single-host, multi-project application server on AWS Lightsail, and
 consolidating all `kenesparta.dev` AWS infrastructure into one state.
 
-**Status:** rev 2.19 **Owner:** kenesparta **Target:** `kenesparta.dev` and `auruming.com` — four Rust services on one host (C3, met exactly)
+**Status:** rev 2.20 **Owner:** kenesparta **Target:** `kenesparta.dev` and `auruming.com` — four Rust services on one host (C3, met exactly)
 
 One file per numbered section; the numbering is stable and is what code comments cite (`spec §5.3`). The spec is the
 source of truth — see [§1](01-purpose.md): if implementation needs something not described here, amend the spec first.

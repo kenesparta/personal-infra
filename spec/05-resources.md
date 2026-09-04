@@ -463,11 +463,12 @@ sized for `small_3_0`: ~350 MB OS+Docker, ~400 MB Postgres, ~50 MB Caddy, 4 × ~
 project is a bundle change to `medium_3_0` on a snapshot, not an entry in `projects.yml`; §9's assert refuses the
 fifth entry rather than letting the OOM killer discover it.
 
-## 5.13 `cdn.auruming.com` — static asset CDN (rev 2.13)
+## 5.13 `cdn.auruming.com` — static asset CDN (rev 2.13, amended 2.20)
 
-An **asset** CDN for `auruming.com` — images, video and similar media — served from S3 + CloudFront rather than by
-the site container. It is not a website: there is no `default_root_object`, so a request for `/` returns 403→ nothing
-rather than resolving to an `index.html` that was never published. Same reasoning as §5.11: bytes served from S3 cost
+An **asset** CDN for `auruming.com` — fonts, images, video and similar media — served from S3 + CloudFront rather
+than by the site container. It is not a website, but since rev 2.20 it carries an empty `index.html` as
+`default_root_object`, exactly as `cdn.kenesparta.dev` does, so that opening the bare hostname answers `200` rather
+than S3's `AccessDenied` XML (see the amendment at the end of this section). Same reasoning as §5.11: bytes served from S3 cost
 no RAM against AD-1's budget, occupy none of C3's four slots, and stay up when the instance does not. Serving a video
 off a 2 GB shared box is the case where that stops being a nicety.
 
@@ -489,7 +490,7 @@ distinction is the whole design note:
 `cdn.kenesparta.dev` are safe only because those paths are filename-versioned and write-once. Creating the equivalent
 on an **empty** CDN would commit a path prefix to a year-long, uninvalidatable browser cache before a single object
 has been published to it — a trap laid for whoever first uploads a stable-name file under `fonts/`. The default
-behavior instead carries `Cache-Control: public, max-age=300` with `override = false`, so a deliberate per-object
+behavior instead carries `Cache-Control: public, max-age=86400` with `override = false`, so a deliberate per-object
 `Cache-Control` set at upload time wins at both the edge (`min_ttl = 0`) and the browser. That is strictly more
 flexible than a path-scoped immutable policy and has no cliff.
 
@@ -511,14 +512,41 @@ but for media specifically it is worth knowing that a viewer in Lima is served f
 first byte, not a failure. Only `PriceClass_All` adds South American edges. That is a cost decision, not a
 correctness one, and it is a one-word change.
 
-**CORS is present**, unlike §5.11's legal pages, and scoped to `https://auruming.com` rather than `*`. Plain `<img>`
-and `<video>` tags need no CORS at all; fonts, `fetch`, and canvas-read pixels do, and those are the cases this
-serves. Widen it only if something outside the site is meant to consume these assets.
+**CORS is present**, unlike §5.11's legal pages, and since rev 2.20 it allows `*`, as `cdn.kenesparta.dev` does.
+Plain `<img>` and `<video>` tags need no CORS at all; fonts, `fetch`, and canvas-read pixels do, and fonts are the case
+that decided this. Rev 2.13 scoped it to `https://auruming.com` alone, which meant a font served from here loaded on
+exactly that origin and nowhere else — not on a local dev server, not on any other property — and the failure
+presents as a console full of CORS errors, which is to say as the CDN being unreachable. Every object here is public
+and `Access-Control-Allow-Credentials` is off, so an allowlist of one origin withheld nothing from anyone who could
+type a URL; it only withheld the assets from browsers. Nothing else in the policy changed.
 
 **Nothing can publish to it yet, on purpose.** No IAM role is created here. Which repository publishes, on which refs,
 is an authorization decision, and §5.11 records why those are made explicitly and one-role-per-repo-per-bucket rather
 than by appending a `sub` to an existing role. Until one exists, uploads are a manual `aws s3 sync` under the SSO
 admin profile, which is appropriate for a CDN with no automated producer.
+
+**Amended in rev 2.20 — open to the internet, like its sibling.** Two of the differences from `cdn.kenesparta.dev`
+that rev 2.13 introduced on purpose were the two things that made this CDN look broken on the day it was first used:
+a bare `/` returned S3's `AccessDenied` XML, and a font loaded from anywhere but `https://auruming.com` was
+CORS-blocked. Both now match the older CDN — `default_root_object = "index.html"` and
+`Access-Control-Allow-Origin: *` — which makes an empty **`index.html` a required member of the upload set** (it was
+uploaded 2026-09-04; delete it and `/` is a 403 again). What did **not** change is the immutable behavior: the
+`fonts/` prefix now exists, and the precondition above still stands. A font that wants a year in the browser gets it
+per object, at upload time:
+
+```bash
+aws s3 cp solway-v19-latin-regular.woff2 s3://auruming-cdn/fonts/ \
+  --content-type font/woff2 \
+  --cache-control 'public, max-age=31536000, immutable' \
+  --profile "$TF_VAR_aws_sso_profile"
+```
+
+The default behavior honours that at both the browser (`override = false`) and the edge (`min_ttl = 0`,
+`max_ttl = 31536000`), so it is the year-long cache without the path-level cliff — and it is only ever right for a
+filename-versioned object (the `-v19-` in the example is the version). Pass `--content-type` explicitly rather than
+trusting the uploader's guess: `cdn.kenesparta.dev`'s fonts are served as `application/x-www-form-urlencoded` today
+because whatever uploaded them guessed. Browsers sniff fonts so it is harmless there, but it is wrong, and this CDN
+sends `X-Content-Type-Options: nosniff`.
 
 ## 5.14 HTTP/3 at the edge (rev 2.14)
 
