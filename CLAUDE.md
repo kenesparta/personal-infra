@@ -169,6 +169,11 @@ Failure modes that are not obvious from any single file (`spec/12-gotchas.md`):
   transport asks the app for gzip itself, inflates the answer, and every viewer gets identity bytes with no
   `Content-Length`, so edge compression cannot kick in either. `vary: accept-encoding` with no `content-encoding` is
   the symptom. Turning them off again silently undoes compression for every project behind the policy.
+- **`hashed_assets` is a claim about the application, and only that application can make it** (§5.16, G31). It names a
+  path whose file names change with their contents, and the edge then keeps those files for as long as the app asks —
+  a year, for `auruming.com`'s `/pkg/*`. Set on a path that reuses its names it serves one build to every viewer until
+  an invalidation, and the two cases look identical from here: `kenesparta.dev` is a Leptos app serving `/pkg/` too,
+  and its bundle is one name for every build. The question is never "does it serve `/pkg/`".
 - **Never run bare `terraform` — always `make`** (G25). The Makefile `-include`s `terraform/.env`, which is the only
   thing that sets `TF_VAR_aws_sso_profile`. Without it the provider gets `profile = null` and the SDK falls through to
   the `[default]` profile in `~/.aws/credentials`, whose static keys are dead — and it fails with

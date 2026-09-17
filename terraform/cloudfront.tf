@@ -112,6 +112,53 @@ data "aws_cloudfront_origin_request_policy" "all_viewer_except_host" {
   name = "Managed-AllViewerExceptHostHeader"
 }
 
+# ── Edge caching for content-named assets (spec §5.16) ───────────────────────
+# The one thing in this estate that is cached at the edge. Everything else
+# rides disabled_plus_geo, whose max_ttl of 1 second means the instance answers
+# every asset request from every viewer.
+#
+# It decides nothing about lifetime: default_ttl is 0, so an origin that says
+# nothing about caching is still not cached, and what is cached lives exactly as
+# long as that origin asked, up to the year an immutable bundle wants. Which
+# paths it applies to is `hashed_assets` in projects.yml, one project at a time
+# — a path that reuses its file names would serve one build to every viewer
+# (G31).
+#
+# The key is the URL and the encoding, nothing else. The geo headers belong to
+# the telemetry on the default behavior (AD-12) and would split this cache per
+# city for a file that is identical everywhere; the applications skip these
+# paths in their access logs anyway. Query strings would only fragment it — a
+# content-named file already carries its version in its name.
+#
+# The accept-encoding flags are the same two as on disabled_plus_geo, for the
+# same reason (G30): they are what puts Accept-Encoding into the origin request,
+# without which Caddy inflates the precompressed .br the build left beside each
+# file.
+resource "aws_cloudfront_cache_policy" "hashed_assets" {
+  name        = "kenesparta-hashed-assets"
+  comment     = "Content-named build assets; the origin's Cache-Control decides (spec §5.16)"
+  min_ttl     = 0
+  default_ttl = 0
+  max_ttl     = 31536000
+
+  parameters_in_cache_key_and_forwarded_to_origin {
+    enable_accept_encoding_gzip   = true
+    enable_accept_encoding_brotli = true
+
+    headers_config {
+      header_behavior = "none"
+    }
+
+    cookies_config {
+      cookie_behavior = "none"
+    }
+
+    query_strings_config {
+      query_string_behavior = "none"
+    }
+  }
+}
+
 resource "aws_cloudfront_distribution" "app" {
   enabled         = true
   is_ipv6_enabled = true
@@ -154,6 +201,26 @@ resource "aws_cloudfront_distribution" "app" {
     function_association {
       event_type   = "viewer-request"
       function_arn = aws_cloudfront_function.true_client_ip.arn
+    }
+  }
+
+  # spec §5.16 — empty unless this project's entry claims content-named assets,
+  # which the blog's does not and should not: it serves /pkg/kenespartadev.css,
+  # one name for every build (G31). No origin request policy and no
+  # viewer-request function, deliberately: nothing a viewer sends changes a
+  # build asset, and with nothing forwarded a client-supplied true-client-ip
+  # cannot reach the origin on these paths either.
+  dynamic "ordered_cache_behavior" {
+    for_each = try([local.projects["blog"].hashed_assets], [])
+
+    content {
+      path_pattern           = ordered_cache_behavior.value
+      target_origin_id       = "instance"
+      allowed_methods        = ["GET", "HEAD", "OPTIONS"]
+      cached_methods         = ["GET", "HEAD"]
+      viewer_protocol_policy = "redirect-to-https"
+      compress               = true
+      cache_policy_id        = aws_cloudfront_cache_policy.hashed_assets.id
     }
   }
 
@@ -299,6 +366,27 @@ resource "aws_cloudfront_distribution" "project" {
     function_association {
       event_type   = "viewer-request"
       function_arn = aws_cloudfront_function.true_client_ip.arn
+    }
+  }
+
+  # spec §5.16 — one behavior for a project that names its assets after their
+  # contents (`hashed_assets` in projects.yml), none for one that does not. No
+  # origin request policy and no viewer-request function, deliberately: nothing
+  # a viewer sends changes a build asset, and with nothing forwarded a
+  # client-supplied true-client-ip cannot reach the origin on these paths
+  # either. Aimed at a path that reuses its names it would serve one build to
+  # every viewer until an invalidation (G31).
+  dynamic "ordered_cache_behavior" {
+    for_each = try([each.value.hashed_assets], [])
+
+    content {
+      path_pattern           = ordered_cache_behavior.value
+      target_origin_id       = "instance"
+      allowed_methods        = ["GET", "HEAD", "OPTIONS"]
+      cached_methods         = ["GET", "HEAD"]
+      viewer_protocol_policy = "redirect-to-https"
+      compress               = true
+      cache_policy_id        = aws_cloudfront_cache_policy.hashed_assets.id
     }
   }
 

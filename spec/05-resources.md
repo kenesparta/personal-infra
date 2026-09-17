@@ -59,6 +59,12 @@ Two optional fields extend an entry (added in rev 2.3, for `budget`):
   `X-Origin-Verify` header themselves in addition to Caddy's gate (the budget API's `ORIGIN_SECRET`). One source,
   no second copy to rotate (G13).
 
+A third arrived in rev 2.22, read by Terraform alone:
+
+- `hashed_assets` — a path pattern whose files are named after their contents, and which the edge may therefore
+  cache for as long as the application asks (§5.16). Only the application knows this about itself, which is why it
+  is stated rather than inferred; stating it of a path that reuses its names is G31.
+
 Each **non-blog** project that declares a `hostname` gets its own CloudFront distribution and alias records generated
 from this file (blog keeps the migrated singleton distribution in `cloudfront.tf`). Each rides the wildcard ACM
 certificate of the registered domain it names in `domain`, so `hostname` must stay within that domain or its apex
@@ -645,3 +651,72 @@ fail alongside it (G28).
 
 The legal site (§5.11) is deliberately untouched: its origin is S3, so it has no origin to fail, and its existing
 403/404 → `/404.html` mapping already covers the only errors it can produce.
+
+## 5.16 Edge caching for content-named assets (rev 2.22)
+
+Until rev 2.22 the estate cached nothing at the edge. Every distribution's default behavior rides
+`disabled_plus_geo`, whose `max_ttl = 1` (§5.10) caps even an origin asking for a year at one second, so every asset
+of every project was fetched from the instance for every viewer. Measured against `auruming.com` on 2026-09-17: its
+release bundle is `immutable` for a year and browsers honored it, but the edge did not, and a cold stylesheet took
+140–360 ms on the origin leg — CloudFront to Lightsail and back — inside a first paint that is otherwise one round
+trip.
+
+**Shape.** A second cache policy, and one ordered behavior on the distributions of the projects that opt in:
+
+| Piece | Value |
+|---|---|
+| Policy | `kenesparta-hashed-assets` — min 0 / **default 0** / max 31536000, accept-encoding flags on, nothing else in the key |
+| Behavior | the project's `hashed_assets` path pattern → the instance origin, `GET/HEAD/OPTIONS`, `compress = true` |
+| Opt-in | `hashed_assets: /pkg/*` in `projects.yml` — set for `auruming` only |
+
+**`default_ttl = 0` is the safety property.** The policy decides nothing about lifetime; the origin does. A response
+with no `Cache-Control` is not cached at all, exactly as before, so aiming the behavior at a project that says
+nothing about caching changes nothing about it. `auruming.com` sends `public, max-age=31536000, immutable` for
+`/pkg/*` in a release build and `no-cache` under `cargo leptos watch`, and the edge now honors both.
+
+**The cache key is the URL and the encoding, and nothing else.** The geo headers are deliberately out: they exist for
+the applications' access logs (AD-12), the applications skip `/pkg/` in those logs, and in a key they would split
+this cache per city for a file that is byte-identical everywhere. Query strings are out for the same reason — a
+content-named file carries its version in its name, so a query string can only fragment the cache or be used to fill
+it. Cookies were never in it.
+
+**No origin request policy and no viewer-request function, deliberately.** Both pieces that make the default behavior
+work have nothing to do here: nothing a viewer sends changes a build asset. Leaving the ORP off also means the origin
+receives only the cache-key values, so a client-supplied `true-client-ip` cannot reach it on these paths — the same
+invariant `true_client_ip` provides on the default behavior, reached by having nothing to forward instead of by
+overwriting. `Accept-Encoding` still arrives, through the policy's two flags (G30), which is what keeps the
+precompressed `.br` the build left beside each file reaching the viewer as it is.
+
+**Why an opt-in field and not a blanket `/pkg/*`.** Two of the four projects are Leptos and serve `/pkg/`, and only
+one of them names those files after their contents. `kenesparta.dev` serves `/pkg/kenespartadev.css` — one name for
+every build — and sends no `Cache-Control` today. Under this policy that is harmless, but the day that app grows a
+`max-age`, a blanket behavior would hand every viewer the previous build out of a shared cache. Nothing in this
+repository can tell the two projects apart: whether a file's name changes with its bytes is a property of the
+application's build and is invisible at the edge. So the entry states it, and G31 is what stating it wrongly costs.
+
+Unlike the headless marker (§5.3 rev 2.10), which was rejected as a field because absence already said it, there is
+nothing here to infer it from — `image`, `port` and `hostname` are all identical between the project that may be
+cached and the one that may not.
+
+**Not extended to `public/`.** auruming's favicons, `robots.txt` and manifest are stable names served with
+`max-age=86400`. Cached at the edge they would be a day stale after a rebrand, with nothing short of an invalidation
+to shorten it, and the win would be one small request on a first view. A content-named file is the only kind whose
+staleness is impossible by construction.
+
+**Verifying it,** against a bundle name taken from the live page rather than guessed — the name changes with every
+release:
+
+```bash
+css=$(curl -s --compressed https://auruming.com/ | grep -o '/pkg/[^"]*\.css' | head -1)
+curl -sS -o /dev/null -D - "https://auruming.com$css" | grep -i -E 'x-cache|cache-control|content-encoding'
+```
+
+The first request may be `Miss from cloudfront`; the second must be `Hit from cloudfront`, with
+`cache-control: public, max-age=31536000, immutable` and `content-encoding: br` on both.
+
+**As applied (2026-09-17, rev 2.22):** one new policy and one in-place distribution update — the blog's dynamic block
+is empty, so its distribution has no diff. The bundle's two remaining files went from ~700 ms each, measured through
+the edge before the change, to 110 ms (the glue) and ~340 ms (the 145 KB wasm), and a second request for either is a
+`Hit`. The page itself stays a `Miss`, which is the point of leaving it on the default behavior: it carries a
+per-render CSP nonce and must never be shared. `auruming.com` no longer requests a stylesheet at all — that app
+inlined it the same day — so the behavior's remaining traffic is the wasm bundle and its glue.

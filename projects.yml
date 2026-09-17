@@ -27,6 +27,14 @@
 #   origin    A record -> static IP; Caddy vhost + Let's Encrypt cert (must resolve
 #             DIRECTLY to the instance so HTTP-01 can succeed — see AD-8)
 #   port      container port Caddy proxies to
+#
+# Optional, and read by Terraform alone (rev 2.22):
+#   hashed_assets  a path pattern whose file names change with their contents,
+#                  which the edge may therefore cache for as long as the app
+#                  asks (spec §5.16). Only the app knows this about itself, so
+#                  it is stated here, never inferred — set on a path that reuses
+#                  its names it serves one build to every viewer until an
+#                  invalidation (G31).
 
 projects:
   - name: blog
@@ -121,6 +129,14 @@ projects:
     # goes away) the day the platform needs them. See auruming.com SECURITY.md,
     # SEC-007.
     inject_database_url: false
+    # The release bundle is named after its contents — LEPTOS_HASH_FILES=true in
+    # the image, /pkg/auruming.<hash>.{css,js,wasm} — so every release is a new
+    # URL and the app asks for a year on each one. The edge may keep them
+    # (§5.16); without this the default behavior's one-second cap sends every
+    # viewer's first request for the bundle to the instance. The blog is NOT
+    # eligible: it serves /pkg/kenespartadev.css, one name for every build
+    # (G31).
+    hashed_assets: /pkg/*
     env:
       LEPTOS_SITE_ADDR: "0.0.0.0:3002"
       RUST_LOG: info

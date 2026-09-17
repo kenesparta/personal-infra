@@ -452,3 +452,24 @@ curl -s -o /dev/null -D - -H 'Accept-Encoding: br, gzip' https://auruming.com/ |
 ```
 
 `content-encoding: br` is right. Nothing at all means the header is still not reaching the origin.
+
+**G31 — `hashed_assets` pointed at reused file names caches one build for everyone, and only an invalidation clears
+it.** (rev 2.22) The field takes a path pattern, and the policy behind it honors the origin's `Cache-Control` up to a
+year (§5.16). Aimed at files whose names change with their contents, staleness is impossible by construction: a new
+build is a new URL and the old entries simply age out unread. Aimed at a path that reuses names, it is one deploy
+away — the edge keeps the previous bytes under the same URL and serves them to every viewer who never had them,
+which is worse than the browser cache it resembles, because no viewer can clear it.
+
+`kenesparta.dev` is the project this is about. It serves `/pkg/kenespartadev.css`, one name for every build, and it
+is a Leptos app like `auruming.com` — the `/pkg/` path, the image shape and the `projects.yml` entry all look the
+same. Today it sends no `Cache-Control` at all, so even with the field set nothing would be cached
+(`default_ttl = 0`); the trap is a reasonable `max-age` added to that app later by someone who has never read this
+file, with the field already in place and nothing to warn them.
+
+So the question before adding the field is not "does it serve `/pkg/`" but **"does the name change when the bytes
+do"** — for a Leptos app, `LEPTOS_HASH_FILES=true` in the image, with `hash.txt` beside the binary. Undoing a mistake
+is per distribution and not in Terraform:
+
+```bash
+aws cloudfront create-invalidation --distribution-id <id> --paths '/pkg/*' --profile "$TF_VAR_aws_sso_profile"
+```
