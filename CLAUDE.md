@@ -207,7 +207,9 @@ Failure modes that are not obvious from any single file (`spec/12-gotchas.md`):
   CloudFront invalidation can reach it, so changing an asset there means renaming it. Stable-name objects overwritten
   in place (`cv/ken_esparta_cv.pdf`, `img/*`) stay on the default behavior, whose five-minute fallback has override
   **off** so the typst-resume CI's own `max-age=3600` on the CV wins. The headers land on error responses too — an
-  asset must exist before anything references it, or the 403 gets pinned as well.
+  asset must exist before anything references it, or the 403 gets pinned as well. `cdn.auruming.com` has no
+  immutable behavior, but two of its objects are immutable per object — the content-named fonts under `fonts/`
+  (spec §5.13) — and are never to be overwritten either.
 - **The legal pages are G19 in reverse** (spec §5.11). `cnayp-bot.kenesparta.dev` serves the Terms of Service and
   Privacy Policy Discord requires, and they are stable names overwritten in place — the whole point of updating one is
   that readers see the new text. No immutable behavior may ever exist on that distribution; it caches five minutes with

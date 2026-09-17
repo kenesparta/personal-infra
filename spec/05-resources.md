@@ -562,6 +562,13 @@ trusting the uploader's guess: `cdn.kenesparta.dev`'s fonts are served as `appli
 because whatever uploaded them guessed. Browsers sniff fonts so it is harmless there, but it is wrong, and this CDN
 sends `X-Content-Type-Options: nosniff`.
 
+**Uploaded this way on 2026-09-17:** `fonts/oldenburg-latin.6467fe0c.woff2` and `fonts/karla-latin.09f92c78.woff2`,
+the two faces `auruming.com` sets its copy in. Their version is the first eight hex digits of their MD5 rather than an
+upstream `-vNN-`: it changes exactly when the bytes do, and it can be checked against the object's ETag. Every browser
+that fetches them keeps them for a year, so **these two keys must never be overwritten** — a changed font is a new
+key. The stable-name `fonts/karla-latin.woff2` and `fonts/oldenburg-latin.woff2` they were copied from are still
+there on the one-day default; the site no longer references them.
+
 ## 5.14 HTTP/3 at the edge (rev 2.14)
 
 Every distribution sets `http_version = "http2and3"`. Until rev 2.13 none of them set it at all, so all six took the
