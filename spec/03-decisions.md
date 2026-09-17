@@ -254,7 +254,8 @@ two mechanisms attached to **every** distribution:
   makes it spoof-proof — a client-sent value never survives — and because the function edits the *viewer* request,
   the untouched `Managed-AllViewerExceptHostHeader` origin request policy forwards it like any other viewer header.
 - a **custom cache policy** (`kenesparta-caching-disabled-plus-geo`) that keeps near-`Managed-CachingDisabled`
-  semantics (`min_ttl = 0`, `default_ttl = 0`, `max_ttl = 1`, no accept-encoding normalization) and whitelists
+  semantics (`min_ttl = 0`, `default_ttl = 0`, `max_ttl = 1`; accept-encoding normalization **on** since rev 2.21,
+  because without it no origin ever sees the viewer's `Accept-Encoding` — G30) and whitelists
   `CloudFront-Viewer-Country`, `CloudFront-Viewer-Country-Region-Name` and `CloudFront-Viewer-City` — cache-key
   values are automatically included in origin requests, which is the only way to carry CloudFront-generated headers
   without touching the ORP. `max_ttl` is 1, not 0, because `CreateCachePolicy` rejects any header whitelist once all

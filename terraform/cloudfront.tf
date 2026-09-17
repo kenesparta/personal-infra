@@ -38,7 +38,8 @@ resource "aws_route53_record" "origin" {
 # in origin requests and the ORP cannot whitelist CloudFront-* headers without
 # also forwarding the viewer's Host, which would break Caddy's per-project
 # vhost routing (AD-8). CloudFront-Viewer-Address / -ASN are rejected in cache
-# policies — the viewer IP travels via the true-client-ip function below.
+# policies — the viewer IP travels via the true-client-ip function below. The
+# same mechanism is what carries the viewer's Accept-Encoding (G30, below).
 #
 # max_ttl is 1, not 0: CreateCachePolicy rejects any header whitelist once all
 # three TTLs are 0 (spec §5.10 as-applied, 2026-08-01). min/default stay 0, so
@@ -50,14 +51,26 @@ resource "aws_route53_record" "origin" {
 # shared geo-wide). Cookies stay out of the key; the ORP still forwards them.
 resource "aws_cloudfront_cache_policy" "disabled_plus_geo" {
   name        = "kenesparta-caching-disabled-plus-geo"
-  comment     = "CachingDisabled semantics + geo headers + Authorization to the origin (AD-12)"
+  comment     = "CachingDisabled semantics + geo headers + Authorization + Accept-Encoding to the origin (AD-12, G30)"
   min_ttl     = 0
   default_ttl = 0
   max_ttl     = 1
 
   parameters_in_cache_key_and_forwarded_to_origin {
-    enable_accept_encoding_gzip   = false
-    enable_accept_encoding_brotli = false
+    # G30 (rev 2.21) — ON, and load-bearing even though nothing is cached.
+    # These two flags are the ONLY way the viewer's Accept-Encoding reaches an
+    # origin: with both off, CloudFront drops the header — the all-except-Host
+    # ORP does not bring it back — and every response left the origin
+    # uncompressed. Worse than uncompressed, in fact: Caddy's upstream transport
+    # then asks the app for gzip on its own and transparently inflates the
+    # answer, so the app compresses for nothing, the response loses its
+    # Content-Length, and `compress = true` on the behaviors below could not
+    # have compressed it either. On, CloudFront forwards a normalized `br,gzip`
+    # and the app's own brotli passes through Caddy and the edge untouched.
+    # The normalized value also joins the cache key, which costs nothing here:
+    # an entry lives one second at most, now once per encoding.
+    enable_accept_encoding_gzip   = true
+    enable_accept_encoding_brotli = true
 
     headers_config {
       header_behavior = "whitelist"

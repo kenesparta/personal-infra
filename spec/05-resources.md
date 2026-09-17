@@ -330,10 +330,11 @@ resource "aws_cloudfront_function" "true_client_ip" {
 resource "aws_cloudfront_cache_policy" "disabled_plus_geo" {
   name = "kenesparta-caching-disabled-plus-geo"
   # Near-CachingDisabled: min/default TTL 0, max_ttl 1, accept-encoding flags
-  # off. Whitelisted headers ride the cache key only to be forwarded to the
-  # origin: CloudFront-Viewer-Country, -Country-Region-Name, -City, plus
-  # Authorization; query strings all. See the caveats below for why max_ttl
-  # is 1 and why Authorization/query strings are in the key.
+  # ON (rev 2.21, G30). Whitelisted headers ride the cache key only to be
+  # forwarded to the origin: CloudFront-Viewer-Country, -Country-Region-Name,
+  # -City, plus Authorization; query strings all. See the caveats below for why
+  # max_ttl is 1, why Authorization/query strings are in the key, and why the
+  # accept-encoding flags are not optional.
 }
 ```
 
@@ -361,6 +362,19 @@ policy makes CloudFront inject the *whole* header family into the viewer request
 forwards every one of them — the origin also sees `-Address`, `-ASN`, `-Latitude`/`-Longitude`, `-Time-Zone`,
 `-Country-Name` and the device-type family, not just the three whitelisted names. Undocumented enrichment, not
 contract: applications may only rely on the whitelisted three plus `true-client-ip`.
+
+**Amended in rev 2.21 — the accept-encoding flags are on.** This section shipped them off, as the managed
+`CachingDisabled` policy has them, and nothing downstream was ever compressed as a result (G30): with both flags off
+CloudFront leaves `Accept-Encoding` out of the origin request — the all-except-Host ORP does not put it back — so no
+application ever learned that the viewer could decompress anything, and the behaviors' `compress = true` never had a
+`Content-Length` to work with. Found through a Lighthouse audit of `auruming.com` ("No compression applied") on
+2026-09-17, while that app's own `CompressionLayer` was demonstrably working. With both flags on, CloudFront forwards
+a normalized `br,gzip` (or whichever of the two the viewer offered) and puts the same value in the cache key. The key
+change is inert here — nothing lives in this cache longer than a second — and the forwarding is the point. It applies
+to every distribution on this policy at once: the blog, the budget API and `auruming.com`. An origin that compresses
+now reaches the viewer compressed; one that does not answers as before, and where that answer carries a
+`Content-Length` CloudFront may now compress it at the edge. Either way the client decodes it transparently, which is
+what `Accept-Encoding` promised in the first place.
 
 ## 5.11 Application legal pages — `cnayp-bot.kenesparta.dev` (rev 2.11)
 

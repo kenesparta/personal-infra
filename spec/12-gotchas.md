@@ -422,3 +422,33 @@ curl -s -o /dev/null -w '%{http_code}\n' \
 ```
 
 502 is right; 200 means the whole chain above is now decorative.
+
+**G30 — A cache policy with the accept-encoding flags off never forwards `Accept-Encoding`, and Caddy then fakes
+one.** (rev 2.21) `enable_accept_encoding_gzip` and `enable_accept_encoding_brotli` read like cache-key tuning — flags
+to leave off on a policy that caches nothing, which is how `CachingDisabled` ships and how §5.10 first copied it. They
+are also the only thing that puts the viewer's `Accept-Encoding` into the origin request: with both off, CloudFront
+drops the header, and the all-except-Host ORP does not bring it back. From there, three layers each behave correctly
+and the viewer still gets nothing compressed:
+
+- **Caddy asks for gzip on its own.** `reverse_proxy` uses Go's HTTP transport, which adds `Accept-Encoding: gzip` to
+  any upstream request that has none and then *transparently inflates* the answer. So the application does compress,
+  on every request, and Caddy undoes it before the response leaves the box.
+- **The inflated response has no `Content-Length`.** Go forwards it chunked.
+- **So the edge cannot compress it either.** `compress = true` on the behavior needs the flags on *and* a
+  `Content-Length`, and here it had neither.
+
+The symptom is a response with `vary: accept-encoding` — proof the application considered compressing — and no
+`content-encoding`. The one uncompressible response nearby (a `favicon.ico`, which the application never tries to
+compress) keeps its `content-length` while every compressible one has lost it; that asymmetry is the tell that the
+inflation happened in Caddy, not in the app. Reproduced 2026-09-17 with `caddy:2-alpine` in front of the
+`auruming.com` binary: `request_header -Accept-Encoding` before `reverse_proxy` turns a 2.7 KB brotli stylesheet into
+10.8 KB of identity, chunked.
+
+The fix is the two flags, on the shared `disabled_plus_geo` policy (§5.10 amended). Verify through the edge, not the
+plan — the plan is a two-attribute in-place update and says nothing about bytes:
+
+```bash
+curl -s -o /dev/null -D - -H 'Accept-Encoding: br, gzip' https://auruming.com/ | grep -i '^content-encoding'
+```
+
+`content-encoding: br` is right. Nothing at all means the header is still not reaching the origin.
